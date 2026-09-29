@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PanelCut.App/PanelCut.App.csproj" />
+    <Project Path="src/PanelCut.Core/PanelCut.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PanelCut.Core.Tests/PanelCut.Core.Tests.csproj" />
+  </Folder>
+</Solution>

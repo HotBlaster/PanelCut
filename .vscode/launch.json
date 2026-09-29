@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "PanelCut: Desktop",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build PanelCut.App",
+            "program": "${workspaceFolder}/src/PanelCut.App/bin/Debug/net10.0-windows/PanelCut.App.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        }
+    ]
+}
