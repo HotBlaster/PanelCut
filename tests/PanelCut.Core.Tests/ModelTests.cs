@@ -23,6 +23,62 @@ public class ModelTests
     }
 
     [Fact]
+    public void BladesValidateFieldsAndAllowZeroKerf()
+    {
+        var brand = new Brand("  Freud ");
+        Assert.Equal("Freud", brand.Name);
+        var blade = new Blade("Fine", 250, 80, 0, brand.Id, "LU3D");
+        Assert.Equal(("Fine", 250d, 80, 0d, (Guid?)brand.Id, "LU3D"),
+            (blade.Name, blade.Diameter, blade.Teeth, blade.Kerf, blade.BrandId, blade.BrandCode));
+        Assert.Equal((null, ""), (new Blade("Rip", 300, 24, 3.2).BrandId, new Blade("Rip", 300, 24, 3.2).BrandCode));
+        Assert.Throws<ArgumentException>(() => new Brand(" "));
+        Assert.Throws<ArgumentException>(() => new Brand("Freud") { Id = Guid.Empty });
+        Assert.Throws<ArgumentException>(() => new Blade(" ", 250, 80, 3));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Blade("Fine", 0, 80, 3));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Blade("Fine", double.NaN, 80, 3));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Blade("Fine", 250, 0, 3));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Blade("Fine", 250, 80, -0.1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Blade("Fine", 250, 80, double.PositiveInfinity));
+        Assert.Throws<ArgumentException>(() => new Blade("Fine", 250, 80, 3, Guid.Empty));
+        Assert.Throws<ArgumentNullException>(() => new Blade("Fine", 250, 80, 3, null, null!));
+        Assert.Throws<ArgumentException>(() => blade with { Id = Guid.Empty });
+    }
+
+    [Fact]
+    public void BladeCatalogueValidatesBrandsAndReferences()
+    {
+        var freud = new Brand("Freud");
+        var blade = new Blade("Fine", 250, 80, 3, freud.Id);
+        var catalogue = new BladeCatalogue();
+        catalogue.Brands.Add(freud);
+        catalogue.Blades.Add(blade);
+        catalogue.Validate();
+        Assert.Same(blade, catalogue.Resolve(blade.Id));
+        Assert.Same(freud, catalogue.ResolveBrand(freud.Id));
+        Assert.Null(catalogue.ResolveBrand(null));
+        Assert.True(catalogue.IsBrandInUse(freud.Id));
+        Assert.Throws<ArgumentException>(() => catalogue.Resolve(Guid.NewGuid()));
+        catalogue.Brands.Add(new Brand("freud"));
+        Assert.Throws<ArgumentException>(catalogue.Validate);
+        catalogue.Brands.RemoveAt(1);
+        catalogue.Brands.Remove(freud);
+        Assert.Throws<ArgumentException>(catalogue.Validate);
+        catalogue.Brands.Add(freud);
+        catalogue.Blades.Add(blade);
+        Assert.Throws<ArgumentException>(catalogue.Validate);
+        catalogue.Blades.RemoveAt(1);
+        catalogue.Brands.Add(freud);
+        Assert.Throws<ArgumentException>(catalogue.Validate);
+        catalogue.Brands.RemoveAt(1);
+        catalogue.Blades.Add(null!);
+        Assert.Throws<ArgumentException>(catalogue.Validate);
+        catalogue.Blades.RemoveAt(1);
+        catalogue.Blades.Clear();
+        Assert.False(catalogue.IsBrandInUse(freud.Id));
+        catalogue.Validate();
+    }
+
+    [Fact]
     public void DefaultsAndCollectionsAreIndependent()
     {
         var project = new Project();
@@ -30,7 +86,7 @@ public class ModelTests
         var scrap = new Scrap(400, 300, TestMaterials.Id("Oak", 18));
         var part = new Part(100, 200, TestMaterials.Id("Oak"));
         Assert.Equal(LengthUnit.Millimetres, project.Unit);
-        Assert.Equal(0, project.KerfWidth);
+        Assert.Null(project.BladeId);
         Assert.Equal(0, panel.EdgeTrim);
         Assert.Equal(0, panel.Priority);
         Assert.Equal(0m, panel.CostPerUnit);
@@ -71,28 +127,23 @@ public class ModelTests
     [InlineData(double.NegativeInfinity)]
     public void InvalidLengthsAreRejectedWithoutChangingPreviousValues(double invalid)
     {
-        var project = new Project { KerfWidth = 3 };
         var panel = new Panel(100, 80, TestMaterials.Id("Oak", 18)) { EdgeTrim = 2 };
         var part = new Part(50, 40, TestMaterials.Id("Oak"));
-        Assert.Throws<ArgumentOutOfRangeException>(() => project.KerfWidth = invalid);
         Assert.Throws<ArgumentOutOfRangeException>(() => panel.EdgeTrim = invalid);
         Assert.Throws<ArgumentOutOfRangeException>(() => panel.Width = invalid);
         Assert.Throws<ArgumentOutOfRangeException>(() => panel.Height = invalid);
         Assert.Throws<ArgumentOutOfRangeException>(() => new Material("Oak", "Plywood", invalid));
         Assert.Throws<ArgumentOutOfRangeException>(() => part.Width = invalid);
         Assert.Throws<ArgumentOutOfRangeException>(() => part.Height = invalid);
-        Assert.Equal(3, project.KerfWidth);
         Assert.Equal(2, panel.EdgeTrim);
         Assert.Equal(100, panel.Width);
         Assert.Equal(50, part.Width);
     }
 
     [Fact]
-    public void ZeroKerfDepletedStockAndNegativePriorityAreValid()
+    public void DepletedStockAndNegativePriorityAreValid()
     {
-        var project = new Project { KerfWidth = 0 };
         var panel = new Panel(100, 80, TestMaterials.Id("Oak", 18), 0) { Priority = -5 };
-        Assert.Equal(0, project.KerfWidth);
         Assert.Equal(0, panel.Quantity);
         Assert.Equal(-5, panel.Priority);
     }

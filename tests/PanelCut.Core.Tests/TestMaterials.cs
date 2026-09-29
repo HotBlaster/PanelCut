@@ -18,10 +18,25 @@ internal static class TestMaterials
             catalogue.Materials.Add(new Material(name, "Plywood", thickness) { Id = Id(name, thickness) });
         return catalogue;
     }
+
+    private static readonly double[] Kerfs = [0, 0.1, 0.5, 1, 2, 3.2, 8, 1000];
+
+    internal static Guid BladeId(double kerf) => Array.IndexOf(Kerfs, kerf) >= 0 ? Id("blade", kerf)
+        : throw new ArgumentOutOfRangeException(nameof(kerf), "Add the kerf to TestMaterials.Kerfs.");
+
+    internal static BladeCatalogue Blades()
+    {
+        var blades = new BladeCatalogue();
+        foreach (var kerf in Kerfs)
+            blades.Blades.Add(new Blade(FormattableString.Invariant($"Kerf {kerf}"), 250, 48, kerf) { Id = BladeId(kerf) });
+        return blades;
+    }
+
+    internal static Project Project(double kerf = 0) => new() { BladeId = BladeId(kerf) };
 }
 
 internal sealed class TestOptimizer
 {
     internal OptimizationResult OptimizePanels(Inventory inventory, Project project) =>
-        new PanelOptimizer().OptimizePanels(inventory, project, TestMaterials.Catalogue());
+        new PanelOptimizer().OptimizePanels(inventory, project, TestMaterials.Catalogue(), TestMaterials.Blades());
 }

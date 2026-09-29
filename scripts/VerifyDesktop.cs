@@ -51,18 +51,20 @@ internal static class VerifyDesktop
                 var loadedMaterial = new MaterialRow(new Material("Plywood", "Plywood", 18));
                 Check(loadedMaterial.Name == "Plywood", "Loading a type-only material name does not change it");
                 var parse = typeof(App).GetMethod("ParsePaths", BindingFlags.Static | BindingFlags.NonPublic)!;
-                var paths = ((string? Inventory, string? Materials))parse.Invoke(null,
-                    [new[] { "--materials-path", "catalogue.json", "--inventory-path", "stock.json" }])!;
-                Check(paths.Inventory == "stock.json" && paths.Materials == "catalogue.json", "Repository CLI options parse independently in either order");
+                var paths = ((string? Inventory, string? Materials, string? Blades))parse.Invoke(null,
+                    [new[] { "--materials-path", "catalogue.json", "--blades-path", "saws.json", "--inventory-path", "stock.json" }])!;
+                Check(paths.Inventory == "stock.json" && paths.Materials == "catalogue.json" && paths.Blades == "saws.json",
+                    "Repository CLI options parse independently in either order");
                 foreach (var invalid in new[] { new[] { "--materials-path" }, new[] { "--bad", "file.json" },
-                    new[] { "--materials-path", "a.json", "--materials-path", "b.json" } })
+                    new[] { "--materials-path", "a.json", "--materials-path", "b.json" }, new[] { "--blades-path", "a.json", "--blades-path", "b.json" } })
                 {
                     try { parse.Invoke(null, [invalid]); throw new Exception("Invalid CLI arguments accepted"); }
                     catch (TargetInvocationException exception) when (exception.InnerException is ArgumentException) { }
                 }
                 Check(true, "Malformed or duplicate CLI arguments rejected");
                 window = new MainWindow(Path.Combine(DirectoryPath, "stock files", "inventory.json"),
-                    Path.Combine(DirectoryPath, "materials catalogue", "materials.json"));
+                    Path.Combine(DirectoryPath, "materials catalogue", "materials.json"),
+                    Path.Combine(DirectoryPath, "blade files", "blades.json"));
                 window.Show();
                 await Drain();
                 var workspace = Field<WorkspaceViewModel>(window, "workspace");
@@ -70,16 +72,17 @@ internal static class VerifyDesktop
                 Check(!Directory.Exists(DirectoryPath), "Startup does not create inventory");
                 Check(Field<TabControl>(window, "Views").SelectedIndex == 0, "Project is the initial view");
                 Check(Field<TabControl>(window, "Views").Items.Cast<TabItem>().Select(tab => tab.Header.ToString())
-                    .SequenceEqual(new[] { "Project", "Panels", "Scraps", "Layout", "Materials" }), "Stock has separate top-level tabs");
+                    .SequenceEqual(new[] { "Project", "Panels", "Scraps", "Layout", "Materials", "Blades" }), "Stock has separate top-level tabs");
 
                 var configurationMenu = Field<MenuItem>(window, "ConfigurationMenu");
                 Check(Field<Menu>(window, "FileMenu").Items.Contains(configurationMenu)
-                    && configurationMenu.Items.Count == 2, "Top menu includes both configuration folder commands");
+                    && configurationMenu.Items.Count == 3, "Top menu includes all configuration folder commands");
                 foreach (var (controlName, menuName, path, tabName) in new[]
                 {
                     ("InventoryLocation", "OpenInventoryFolderMenuItem", workspace.InventoryPath, "PanelsTab"),
                     ("ScrapsLocation", "OpenInventoryFolderMenuItem", workspace.InventoryPath, "ScrapsTab"),
-                    ("MaterialsLocation", "OpenMaterialsFolderMenuItem", workspace.MaterialsPath, "MaterialsTab")
+                    ("MaterialsLocation", "OpenMaterialsFolderMenuItem", workspace.MaterialsPath, "MaterialsTab"),
+                    ("BladesLocation", "OpenBladesFolderMenuItem", workspace.BladesPath, "BladesTab")
                 })
                 {
                     SelectTab(window, tabName);
@@ -232,6 +235,7 @@ internal static class VerifyDesktop
                 Check(workspace.Panels.Count == 1 && !Field<bool>(window, "stockPending"), "Escape cancels an added stock row");
                 Check(Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.InventoryPath)), "Cancelled add leaves file unchanged");
 
+                var (fineId, ripId) = await VerifyBladesAsync(window, workspace);
                 Field<TabControl>(window, "Views").SelectedIndex = 0;
                 Call(window, "AddPartClick");
                 var parts = Field<DataGrid>(window, "PartsGrid");
@@ -255,15 +259,22 @@ internal static class VerifyDesktop
                 await workspace.SaveProjectAsync(projectPath);
                 Check((await new ProjectStore().LoadAsync(projectPath)).Parts.Count == 1, "Project saves separately");
 
-                var kerf = Field<TextBox>(window, "KerfInput");
-                kerf.Text = "3";
-                Check(Invoke<bool>(window, "CommitProject"), "Positive kerf commits");
-                kerf.Text = "0";
-                Check(Invoke<bool>(window, "CommitProject") && workspace.Project.KerfWidth == 0, "Kerf can be reset to zero");
-                kerf.Text = "-1";
-                Check(!Invoke<bool>(window, "CommitProject") && workspace.Project.KerfWidth == 0, "Negative kerf is rejected");
-                kerf.Text = "2";
-                Check(Invoke<bool>(window, "CommitProject"), "Valid kerf recovers after validation error");
+                var bladeInput = Field<ComboBox>(window, "BladeInput");
+                var kerfDisplay = Field<TextBlock>(window, "KerfDisplay");
+                Check(workspace.Project.BladeId is null && kerfDisplay.Text == "Kerf: select a blade", "New project starts without a blade");
+                await Invoke<Task>(window, "OptimizeAsync");
+                Check(Field<OptimizationResult?>(window, "result") is null && Field<TextBox>(window, "Status").Text.Contains("Select a blade")
+                    && Field<TabControl>(window, "Views").SelectedItem == Field<TabItem>(window, "ProjectTab"),
+                    "Optimize is blocked until a blade is selected");
+                Check(bladeInput.Items.Cast<BladeOption>().Select(option => option.Id).Order().SequenceEqual(new[] { fineId, ripId }.Order()),
+                    "Project blade dropdown lists every saved blade");
+                bladeInput.SelectedValue = fineId;
+                Check(workspace.Project.BladeId == fineId && workspace.IsDirty && kerfDisplay.Text == $"Kerf {EditableRow.Format(3.2)} mm",
+                    "Selecting a blade sets the project blade and shows its kerf");
+                Field<ComboBox>(window, "UnitInput").SelectedIndex = 1;
+                Check(kerfDisplay.Text == $"Kerf {EditableRow.Format(3.2 / 25.4)} inch" && workspace.Project.BladeId == fineId,
+                    "Kerf display follows the project unit");
+                Field<ComboBox>(window, "UnitInput").SelectedIndex = 0;
                 workspace.Parts.Add(workspace.CreatePartRow(new Part(600, 400, oakId, 4) { Label = "Cabinet side", GroupTag = "Bedroom" }));
                 workspace.Parts.Add(workspace.CreatePartRow(new Part(9999, 9999, oakId) { Label = "Oversize", GroupTag = "Hall" }));
                 Check(Invoke<bool>(window, "CommitProject"), "Mixed project commits");
@@ -272,6 +283,8 @@ internal static class VerifyDesktop
                 var optimized = Field<OptimizationResult>(window, "result");
                 Check(optimized.Sheets.Count > 1, "Optimize creates multiple sheets");
                 Check(optimized.UnplacedParts.Count == 1, "Unplaced demand is visible");
+                Check(optimized.Settings.BladeId == fineId && optimized.Settings.KerfWidth == 3.2
+                    && Field<TextBlock>(window, "Metrics").Text.Contains("Fine crosscut"), "Optimize uses and reports the selected blade kerf");
                 Check(Field<Border>(window, "DrawingHost").Child is SheetDrawing, "Selected sheet has a drawing");
                 Check(Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.InventoryPath)), "Optimize never writes inventory");
                 Check(workspace.Inventory.Panels[0].Quantity == 4, "Optimize never consumes stock");
@@ -286,9 +299,19 @@ internal static class VerifyDesktop
                 Field<TabControl>(window, "Views").SelectedIndex = 0;
                 await Drain();
                 Capture(window, "project-960.png");
-                kerf.Text = "0";
-                Invoke<bool>(window, "CommitProject");
-                Check(Field<OptimizationResult?>(window, "result") is null, "Changed inputs invalidate old layout");
+                bladeInput.SelectedValue = ripId;
+                Check(Field<OptimizationResult?>(window, "result") is null && workspace.Project.BladeId == ripId, "Changed inputs invalidate old layout");
+                await DeleteBlades(window, [ripId]);
+                Check(workspace.Project.BladeId == ripId && kerfDisplay.Text == "Kerf: blade missing"
+                    && ((BladeOption)bladeInput.SelectedItem).Display.StartsWith("Missing blade", StringComparison.Ordinal),
+                    "Deleting the project's blade shows it as missing without changing the project");
+                await Invoke<Task>(window, "OptimizeAsync");
+                Check(Field<OptimizationResult?>(window, "result") is null && Field<TextBox>(window, "Status").Text.Contains("was deleted"),
+                    "Missing blade blocks optimization");
+                Capture(window, "project-missing-blade-960.png");
+                bladeInput.SelectedValue = fineId;
+                Check(workspace.Project.BladeId == fineId && bladeInput.Items.Cast<BladeOption>().All(option => !option.Display.StartsWith("Missing", StringComparison.Ordinal)),
+                    "Selecting another blade clears the missing entry");
                 Field<TabControl>(window, "Views").SelectedIndex = 1;
                 await Drain();
                 Capture(window, "inventory-960.png");
@@ -367,6 +390,12 @@ internal static class VerifyDesktop
                     throw new Exception("Project overwrote materials");
                 }
                 catch (InvalidOperationException) { Console.WriteLine("PASS Project cannot overwrite materials path"); }
+                try
+                {
+                    await workspace.SaveProjectAsync(workspace.BladesPath);
+                    throw new Exception("Project overwrote blades");
+                }
+                catch (InvalidOperationException) { Console.WriteLine("PASS Project cannot overwrite blades path"); }
                 Check(Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.InventoryPath)), "Rejected project save preserves inventory");
                 var currentProject = workspace.Project;
                 var currentPath = workspace.ProjectPath;
@@ -378,7 +407,7 @@ internal static class VerifyDesktop
                 await workspace.OpenProjectAsync(projectPath);
                 Check(!workspace.IsDirty && workspace.Parts.Count == 3, "Opening saved project resets dirty state");
                 workspace.NewProject();
-                Check(workspace.Parts.Count == 0 && workspace.Project.Unit == LengthUnit.Millimetres && workspace.Project.KerfWidth == 0, "New project restores defaults");
+                Check(workspace.Parts.Count == 0 && workspace.Project.Unit == LengthUnit.Millimetres && workspace.Project.BladeId is null, "New project restores defaults");
                 Check(Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.InventoryPath)), "Open and New preserve stock file");
                 await File.WriteAllTextAsync(workspace.InventoryPath, "{");
                 await Invoke<Task>(window, "LoadStockAsync");
@@ -397,6 +426,15 @@ internal static class VerifyDesktop
                 await File.WriteAllBytesAsync(workspace.MaterialsPath, catalogueBefore);
                 await Invoke<Task>(window, "LoadMaterialsAsync");
                 Check(workspace.MaterialsReady, "Catalogue reload recovers after repair");
+                var bladesBefore = await File.ReadAllBytesAsync(workspace.BladesPath);
+                await File.WriteAllTextAsync(workspace.BladesPath, "{");
+                await Invoke<Task>(window, "LoadBladesAsync");
+                Check(!workspace.BladesReady && !Field<DataGrid>(window, "BladesGrid").IsEnabled && !Field<ComboBox>(window, "BladeInput").IsEnabled
+                    && !Field<Button>(window, "OptimizeButton").IsEnabled, "Corrupt blades file blocks blade editing and Optimize");
+                Check(await File.ReadAllTextAsync(workspace.BladesPath) == "{", "Corrupt blades file is never overwritten on load");
+                await File.WriteAllBytesAsync(workspace.BladesPath, bladesBefore);
+                await Invoke<Task>(window, "LoadBladesAsync");
+                Check(workspace.BladesReady && workspace.Blades.Blades.Count == 1, "Blades reload recovers after repair");
                 await File.WriteAllTextAsync(workspace.InventoryPath, """{"schemaVersion":1,"panels":[],"scraps":[]}""");
                 await Invoke<Task>(window, "LoadStockAsync");
                 Check(!workspace.InventoryReady, "Old inventory format is rejected");
@@ -407,6 +445,9 @@ internal static class VerifyDesktop
                 Check(workspace.Inventory.Panels[0].MaterialId == oakId && workspace.Panels[0].MaterialId == oakId
                     && workspace.Panels[0].MaterialStatus == "Select material", "Missing references remain visible and retain their IDs");
                 workspace.Parts.Add(workspace.CreatePartRow(new Part(100, 100, oakId)));
+                Invoke<object?>(window, "RefreshProjectControls");
+                Field<ComboBox>(window, "BladeInput").SelectedValue = fineId;
+                Check(workspace.ProjectBlade?.Id == fineId, "Blade is selected before the unresolved-material check");
                 await Invoke<Task>(window, "OptimizeAsync");
                 Check(Field<OptimizationResult?>(window, "result") is null, "Unresolved material blocks optimization");
                 Check(Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.InventoryPath)), "Unresolved references do not rewrite inventory");
@@ -447,6 +488,158 @@ internal static class VerifyDesktop
 
     private static Task DeleteStock(MainWindow window, Guid[] ids) =>
         (Task)typeof(MainWindow).GetMethod("DeleteStockAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [ids])!;
+
+    private static Task DeleteBlades(MainWindow window, Guid[] ids) =>
+        (Task)typeof(MainWindow).GetMethod("DeleteBladesAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [ids])!;
+
+    private static Task DeleteBrands(MainWindow window, Guid[] ids) =>
+        (Task)typeof(MainWindow).GetMethod("DeleteBrandsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [ids])!;
+
+    private static void PressKey(UIElement target, Key key) =>
+        target.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(target)!, 0, key)
+        {
+            RoutedEvent = Keyboard.PreviewKeyDownEvent
+        });
+
+    private static async Task<BrandPicker> BeginBrand(DataGrid grid, BladeRow row)
+    {
+        var column = grid.Columns.Single(column => column.SortMemberPath == "Brand");
+        grid.SelectedItem = row;
+        grid.ScrollIntoView(row, column);
+        grid.CurrentCell = new DataGridCellInfo(row, column);
+        grid.BeginEdit();
+        grid.UpdateLayout();
+        await Drain();
+        return Find<BrandPicker>(column.GetCellContent(row)) ?? throw new InvalidOperationException("No brand picker");
+    }
+
+    // Keyboard focus is not guaranteed in the harness, so open the list explicitly when typing did not.
+    private static void OpenBrandList(BrandPicker picker)
+    {
+        if (!picker.IsDropDownOpen)
+            PressKey(picker, Key.Down);
+        Check(picker.IsDropDownOpen, "Brand dropdown opens");
+    }
+
+    private static async Task SaveBladeRow(MainWindow window, DataGrid grid, string description)
+    {
+        Check(grid.CommitEdit(DataGridEditingUnit.Row, true), description);
+        await Field<Task>(window, "bladeSave");
+        await Drain();
+        Check(!Field<bool>(window, "bladePending"), $"{description} and saves");
+    }
+
+    private static async Task<(Guid Fine, Guid Rip)> VerifyBladesAsync(MainWindow window, WorkspaceViewModel workspace)
+    {
+        SelectTab(window, "BladesTab");
+        await Drain();
+        Check(workspace.BladesReady && workspace.BladeRows.Count == 0 && !File.Exists(workspace.BladesPath),
+            "Missing blades file loads empty without creating it");
+        var grid = Field<DataGrid>(window, "BladesGrid");
+        var brandsGrid = Field<DataGrid>(window, "BrandsGrid");
+        Check(grid.SelectionMode == DataGridSelectionMode.Extended && brandsGrid.SelectionMode == DataGridSelectionMode.Extended,
+            "Blade and brand grids support multiple selection");
+
+        Call(window, "AddBladeClick");
+        await Drain();
+        var fine = workspace.BladeRows.Single();
+        SetCell(grid, fine, "Name", "Fine crosscut");
+        var picker = await BeginBrand(grid, fine);
+        Check(picker.Choices.Count == 0, "Brand dropdown is empty before any brand exists");
+        picker.Text = "Freud";
+        Check(picker.Choices.Count == 1 && picker.Choices[0].IsNew && picker.Choices[0].Label == "Create \"Freud\"",
+            "Typing an unknown brand offers to create it");
+        OpenBrandList(picker);
+        PressKey(picker, Key.Enter);
+        Check(!picker.IsDropDownOpen && fine.NewBrand == "Freud" && fine.BrandId is null, "Enter chooses Create for a new brand");
+        grid.CommitEdit(DataGridEditingUnit.Cell, true);
+        SetCell(grid, fine, "BrandCode", "LU3D 1000");
+        SetCell(grid, fine, "Diameter", "250");
+        SetCell(grid, fine, "Teeth", "80");
+        SetCell(grid, fine, "Kerf", EditableRow.Format(3.2));
+        await SaveBladeRow(window, grid, "Blade with a new brand commits");
+        var saved = await new BladeStore(workspace.BladesPath).LoadAsync();
+        var freud = saved.Brands.Single();
+        Check(freud.Name == "Freud" && saved.Blades.Single().BrandId == freud.Id && saved.Blades[0].Kerf == 3.2
+            && saved.Blades[0].BrandCode == "LU3D 1000", "New brand and blade are saved together");
+        Check(workspace.BrandNames.SequenceEqual(new[] { "Freud" }) && workspace.BrandRows.Single().Id == freud.Id,
+            "Created brand becomes a dropdown option and appears in Brands");
+
+        Call(window, "AddBladeClick");
+        await Drain();
+        var rip = workspace.BladeRows.Last();
+        SetCell(grid, rip, "Name", "Rip");
+        picker = await BeginBrand(grid, rip);
+        Check(picker.Choices.Count == 1 && !picker.Choices[0].IsNew, "Opening the brand editor lists existing brands");
+        picker.Text = "fre";
+        Check(picker.Choices.Select(choice => choice.Label).SequenceEqual(new[] { "Freud", "Create \"fre\"" }),
+            "Partial text filters brands and still offers Create");
+        OpenBrandList(picker);
+        PressKey(picker, Key.Enter);
+        Check(rip.BrandId == freud.Id && rip.NewBrand == "" && picker.Text == "Freud", "Enter chooses the highlighted existing brand");
+        grid.CommitEdit(DataGridEditingUnit.Cell, true);
+        SetCell(grid, rip, "Diameter", "300");
+        SetCell(grid, rip, "Teeth", "24");
+        SetCell(grid, rip, "Kerf", "0");
+        await SaveBladeRow(window, grid, "Blade with an existing brand and zero kerf commits");
+        rip = workspace.BladeRows.Single(row => row.Id == rip.Id);
+        SetCell(grid, rip, "Brand", "FREUD");
+        await SaveBladeRow(window, grid, "Brand typed in another case commits");
+        Check(workspace.Blades.Brands.Count == 1 && workspace.Blades.Resolve(rip.Id).BrandId == freud.Id,
+            "Brand names match ignoring case instead of creating duplicates");
+
+        var before = await File.ReadAllBytesAsync(workspace.BladesPath);
+        Call(window, "AddBladeClick");
+        await Drain();
+        var draft = workspace.BladeRows.Last();
+        SetCell(grid, draft, "Name", "Draft");
+        SetCell(grid, draft, "Brand", "Makita");
+        SetCell(grid, draft, "Diameter", "0");
+        SetCell(grid, draft, "Teeth", "24");
+        SetCell(grid, draft, "Kerf", "2");
+        Check(!grid.CommitEdit(DataGridEditingUnit.Row, true), "Invalid blade diameter cannot commit");
+        Call(window, "CancelBladeClick");
+        await Drain();
+        Check(workspace.BladeRows.Count == 2 && workspace.BrandRows.Count == 1 && !Field<bool>(window, "bladePending")
+            && Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.BladesPath)),
+            "Cancelling a draft with a new brand creates neither the blade nor the brand");
+
+        var brandRow = workspace.BrandRows.Single();
+        SetCell(brandsGrid, brandRow, "Name", "Freud Tools");
+        await SaveBladeRow(window, brandsGrid, "Brand rename commits");
+        Check(workspace.BladeRows.All(row => row.Brand == "Freud Tools") && workspace.BrandNames.Single() == "Freud Tools",
+            "Renaming a brand updates every blade using it");
+        before = await File.ReadAllBytesAsync(workspace.BladesPath);
+        await DeleteBrands(window, [freud.Id]);
+        Check(workspace.Blades.Brands.Count == 1 && Field<TextBox>(window, "Status").Text.Contains("used by 2 blade(s)")
+            && Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.BladesPath)), "A brand in use cannot be deleted");
+        Call(window, "AddBrandClick");
+        await Drain();
+        SetCell(brandsGrid, workspace.BrandRows.Last(), "Name", "freud tools");
+        Check(!brandsGrid.CommitEdit(DataGridEditingUnit.Row, true), "Duplicate brand names are rejected ignoring case");
+        SetCell(brandsGrid, workspace.BrandRows.Last(), "Name", "Festool");
+        await SaveBladeRow(window, brandsGrid, "Unused brand commits");
+        var festool = workspace.Blades.Brands.Single(brand => brand.Name == "Festool");
+        await DeleteBrands(window, [festool.Id]);
+        Check(workspace.Blades.Brands.Select(brand => brand.Name).SequenceEqual(new[] { "Freud Tools" }), "An unused brand can be deleted");
+
+        foreach (var width in new[] { 1280, 960 })
+        {
+            window.Width = width;
+            await Drain();
+            Capture(window, $"blades-{width}.png");
+        }
+        window.Width = 1280;
+        picker = await BeginBrand(grid, workspace.BladeRows[0]);
+        picker.Text = "F";
+        OpenBrandList(picker);
+        var popup = (Popup)typeof(BrandPicker).GetField("popup", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(picker)!;
+        await Drain();
+        CaptureElement((FrameworkElement)popup.Child, "brand-picker-popup.png");
+        Call(window, "CancelBladeClick");
+        await Drain();
+        return (workspace.BladeRows.Single(row => row.Name == "Fine crosscut").Id, workspace.BladeRows.Single(row => row.Name == "Rip").Id);
+    }
 
     private static Task<bool> SaveProject(MainWindow window) =>
         (Task<bool>)typeof(MainWindow).GetMethod("SaveProjectAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [false])!;
@@ -693,7 +886,8 @@ internal static class VerifyDesktop
     }
 
     private static bool IsNumericProperty(string property) =>
-        property is "Width" or "Height" or "Quantity" or "Thickness" or "Priority" or "CostPerUnit" or "EdgeTrim";
+        property is "Width" or "Height" or "Quantity" or "Thickness" or "Priority" or "CostPerUnit" or "EdgeTrim"
+            or "Diameter" or "Teeth" or "Kerf";
 
     private static async Task VerifyTableLayoutAsync(MainWindow window)
     {
@@ -703,7 +897,8 @@ internal static class VerifyDesktop
             foreach (var (tabName, gridName) in new[]
             {
                 ("ProjectTab", "PartsGrid"), ("PanelsTab", "PanelsGrid"),
-                ("ScrapsTab", "ScrapsGrid"), ("MaterialsTab", "MaterialsGrid")
+                ("ScrapsTab", "ScrapsGrid"), ("MaterialsTab", "MaterialsGrid"),
+                ("BladesTab", "BladesGrid"), ("BladesTab", "BrandsGrid")
             })
             {
                 SelectTab(window, tabName);
@@ -774,6 +969,18 @@ internal static class VerifyDesktop
         var pixels = new byte[bitmap.PixelWidth * bitmap.PixelHeight * 4];
         bitmap.CopyPixels(pixels, bitmap.PixelWidth * 4, 0);
         Check(pixels.Any(value => value != 0), $"Screenshot is nonblank: {name}");
+    }
+
+    private static void CaptureElement(FrameworkElement element, string name)
+    {
+        element.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        element.Arrange(new Rect(element.DesiredSize));
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(element.ActualWidth), (int)Math.Ceiling(element.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(element);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var output = File.Create(Path.Combine(DirectoryPath, name));
+        encoder.Save(output);
     }
 
     private static async Task Drain() => await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);

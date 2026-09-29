@@ -37,6 +37,92 @@ public sealed class PersistenceTests : IDisposable
         Assert.Equal("{}", await File.ReadAllTextAsync(path));
     }
 
+    [Fact]
+    public async Task BladesAndBrandsRoundTripAndRejectInvalidSaves()
+    {
+        var path = Path.Combine(directory, "blades.json");
+        var store = new BladeStore(path);
+        Assert.Empty((await store.LoadAsync()).Blades);
+        Assert.False(Directory.Exists(directory));
+        var catalogue = CreateBlades();
+        await store.SaveAsync(catalogue);
+        var loaded = await store.LoadAsync();
+        Assert.Equal(catalogue.Brands, loaded.Brands);
+        Assert.Equal(catalogue.Blades, loaded.Blades);
+        using (var json = JsonDocument.Parse(await File.ReadAllTextAsync(path)))
+        {
+            Assert.Equal(new[] { "blades", "brands", "schemaVersion" },
+                json.RootElement.EnumerateObject().Select(property => property.Name).Order());
+            Assert.Equal(new[] { "brandCode", "brandId", "diameter", "id", "kerf", "name", "teeth" },
+                json.RootElement.GetProperty("blades")[0].EnumerateObject().Select(property => property.Name).Order());
+            Assert.Equal(new[] { "id", "name" },
+                json.RootElement.GetProperty("brands")[0].EnumerateObject().Select(property => property.Name).Order());
+        }
+        var before = await File.ReadAllBytesAsync(path);
+        catalogue.Brands.Add(new Brand("FREUD"));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(catalogue));
+        catalogue.Brands.RemoveAt(catalogue.Brands.Count - 1);
+        catalogue.Brands.RemoveAt(0);
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(catalogue));
+        Assert.Equal(before, await File.ReadAllBytesAsync(path));
+        Assert.False(File.Exists(Path.Combine(directory, "materials.json")));
+    }
+
+    [Theory]
+    [InlineData("blades", "id", null)]
+    [InlineData("blades", "name", null)]
+    [InlineData("blades", "diameter", null)]
+    [InlineData("blades", "teeth", null)]
+    [InlineData("blades", "kerf", null)]
+    [InlineData("blades", "name", "\" \"")]
+    [InlineData("blades", "diameter", "0")]
+    [InlineData("blades", "teeth", "0")]
+    [InlineData("blades", "teeth", "1.5")]
+    [InlineData("blades", "kerf", "-1")]
+    [InlineData("blades", "brandCode", "null")]
+    [InlineData("blades", "brandId", "\"00000000-0000-0000-0000-000000000000\"")]
+    [InlineData("blades", "brandId", "\"6c1e3f39-3a6f-4d2e-9a61-2b1e8a0f5d11\"")]
+    [InlineData("blades", "unknown", "true")]
+    [InlineData("brands", "id", null)]
+    [InlineData("brands", "name", null)]
+    [InlineData("brands", "name", "\" \"")]
+    [InlineData("brands", "name", "\"festool\"")]
+    [InlineData("brands", "unknown", "true")]
+    public async Task InvalidBladeEntriesAreRejectedWithoutOverwrite(string list, string field, string? value)
+    {
+        var path = Path.Combine(directory, "blades.json");
+        var store = new BladeStore(path);
+        await store.SaveAsync(CreateBlades());
+        var document = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
+        var entry = document[list]![0]!.AsObject();
+        if (value is null)
+            entry.Remove(field);
+        else
+            entry[field] = JsonNode.Parse(value);
+        var text = document.ToJsonString();
+        await File.WriteAllTextAsync(path, text);
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.LoadAsync());
+        Assert.Equal(text, await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
+    public async Task OptionalBladeFieldsUseDefaults()
+    {
+        var path = Path.Combine(directory, "blades.json");
+        await WriteJsonAsync(path, $$"""{"schemaVersion":1,"brands":[],"blades":[{"id":"{{Guid.NewGuid()}}","name":"Rip","diameter":300,"teeth":24,"kerf":0}]}""");
+        var blade = Assert.Single((await new BladeStore(path).LoadAsync()).Blades);
+        Assert.Null(blade.BrandId);
+        Assert.Equal(string.Empty, blade.BrandCode);
+        Assert.Equal(0, blade.Kerf);
+    }
+
+    [Fact]
+    public void DefaultBladeLocationUsesApplicationData()
+    {
+        var expected = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PanelCut", "blades.json");
+        Assert.Equal(Path.GetFullPath(expected), new BladeStore().FilePath);
+    }
+
     [Theory]
     [InlineData("id", null)]
     [InlineData("name", null)]
@@ -137,13 +223,14 @@ public sealed class PersistenceTests : IDisposable
         Assert.Equal(inventoryBytes, await File.ReadAllBytesAsync(InventoryPath));
         Assert.Equal(snapshot, JsonSerializer.Serialize(inventory));
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(ProjectPath));
-        Assert.Equal(new[] { "kerfWidth", "parts", "schemaVersion", "unit" },
+        Assert.Equal(new[] { "bladeId", "parts", "schemaVersion", "unit" },
             json.RootElement.EnumerateObject().Select(property => property.Name).Order());
         Assert.Equal(new[] { "edgeBandBottom", "edgeBandLeft", "edgeBandRight", "edgeBandTop", "groupTag", "height", "id", "label", "materialId", "quantity", "width" },
             json.RootElement.GetProperty("parts")[0].EnumerateObject().Select(property => property.Name).Order());
         Assert.Equal("inches", json.RootElement.GetProperty("unit").GetString());
         Assert.Equal(254, json.RootElement.GetProperty("parts")[0].GetProperty("width").GetDouble());
-        Assert.Equal(0, loaded.KerfWidth);
+        Assert.Equal(3, json.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(project.BladeId, loaded.BladeId);
     }
 
     [Fact]
@@ -160,18 +247,18 @@ public sealed class PersistenceTests : IDisposable
         var project = CreateProject();
         var projects = new ProjectStore();
         await projects.SaveAsync(ProjectPath, project);
-        project.KerfWidth = 3.2;
+        project.BladeId = null;
         await projects.SaveAsync(ProjectPath, project);
-        Assert.Equal(3.2, (await projects.LoadAsync(ProjectPath)).KerfWidth);
+        Assert.Null((await projects.LoadAsync(ProjectPath)).BladeId);
         Assert.Empty(Directory.GetFiles(directory, "*.tmp", SearchOption.AllDirectories));
     }
 
     [Fact]
     public async Task OmittedOptionalFieldsUseDocumentedDefaults()
     {
-        await WriteJsonAsync(ProjectPath, """{"schemaVersion":2,"parts":[]}""");
+        await WriteJsonAsync(ProjectPath, """{"schemaVersion":3,"parts":[]}""");
         var project = await new ProjectStore().LoadAsync(ProjectPath);
-        Assert.Equal(0, project.KerfWidth);
+        Assert.Null(project.BladeId);
         Assert.Equal(LengthUnit.Millimetres, project.Unit);
         var stock = new JsonObject
         {
@@ -196,14 +283,16 @@ public sealed class PersistenceTests : IDisposable
     [InlineData("[]")]
     [InlineData("{}")]
     [InlineData("{\"schemaVersion\":1,\"parts\":[]}")]
-    [InlineData("{\"schemaVersion\":3,\"parts\":[]}")]
-    [InlineData("{\"schemaVersion\":2,\"parts\":null}")]
-    [InlineData("{\"schemaVersion\":2,\"parts\":[null]}")]
-    [InlineData("{\"schemaVersion\":2,\"parts\":[],\"kerfWidth\":-1}")]
-    [InlineData("{\"schemaVersion\":2,\"parts\":[],\"kerfWidth\":\"NaN\"}")]
-    [InlineData("{\"schemaVersion\":2,\"parts\":[],\"unit\":\"yards\"}")]
-    [InlineData("{\"schemaVersion\":2,\"parts\":[],\"unit\":1}")]
-    [InlineData("{\"schemaVersion\":2,\"parts\":[],\"inventory\":{}}")]
+    [InlineData("{\"schemaVersion\":2,\"parts\":[]}")]
+    [InlineData("{\"schemaVersion\":4,\"parts\":[]}")]
+    [InlineData("{\"schemaVersion\":3,\"parts\":null}")]
+    [InlineData("{\"schemaVersion\":3,\"parts\":[null]}")]
+    [InlineData("{\"schemaVersion\":3,\"parts\":[],\"kerfWidth\":2}")]
+    [InlineData("{\"schemaVersion\":3,\"parts\":[],\"bladeId\":\"00000000-0000-0000-0000-000000000000\"}")]
+    [InlineData("{\"schemaVersion\":3,\"parts\":[],\"bladeId\":\"blade\"}")]
+    [InlineData("{\"schemaVersion\":3,\"parts\":[],\"unit\":\"yards\"}")]
+    [InlineData("{\"schemaVersion\":3,\"parts\":[],\"unit\":1}")]
+    [InlineData("{\"schemaVersion\":3,\"parts\":[],\"inventory\":{}}")]
     public async Task InvalidProjectFilesAreRejectedWithoutOverwrite(string text)
     {
         await WriteJsonAsync(ProjectPath, text);
@@ -419,9 +508,21 @@ public sealed class PersistenceTests : IDisposable
         return inventory;
     }
 
+    private static BladeCatalogue CreateBlades()
+    {
+        var catalogue = new BladeCatalogue();
+        var freud = new Brand("Freud");
+        var festool = new Brand("Festool");
+        catalogue.Brands.AddRange([freud, festool]);
+        catalogue.Blades.Add(new Blade("Fine crosscut", 250, 80, 3.2, freud.Id, "LU3D 1000"));
+        catalogue.Blades.Add(new Blade("Rip", 300, 24, 0, festool.Id));
+        catalogue.Blades.Add(new Blade("Generic", 160, 12, 2.2));
+        return catalogue;
+    }
+
     private static Project CreateProject()
     {
-        var project = new Project { Unit = LengthUnit.Inches, KerfWidth = 0 };
+        var project = new Project { Unit = LengthUnit.Inches, BladeId = TestMaterials.BladeId(3.2) };
         project.Parts.Add(new Part(254, 127, TestMaterials.Id("Oak"), 3)
         {
             Label = "Shelf, left", GroupTag = "Kitchen",

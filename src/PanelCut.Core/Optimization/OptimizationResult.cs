@@ -28,7 +28,7 @@ public sealed record PartSnapshot(
     bool EdgeBandLeft, bool EdgeBandRight, string GroupTag,
     Guid MaterialId, string MaterialType, double Thickness);
 
-public sealed record JobSettings(double KerfWidth, LengthUnit Unit);
+public sealed record JobSettings(Guid BladeId, string BladeName, double KerfWidth, LengthUnit Unit);
 public sealed record PlacedPart(PartSnapshot Part, int CopyIndex, LayoutRectangle Bounds, bool IsRotated);
 public sealed record UnplacedPart(PartSnapshot Part, int Quantity);
 public sealed record GuillotineCut(LayoutRectangle Region, CutAxis Axis, double Position, double KerfWidth);

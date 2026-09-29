@@ -4,16 +4,20 @@ namespace PanelCut.Core.Optimization;
 
 public sealed class PanelOptimizer
 {
-    public OptimizationResult OptimizePanels(Inventory inventory, Project project, MaterialCatalogue catalogue)
+    public OptimizationResult OptimizePanels(Inventory inventory, Project project, MaterialCatalogue catalogue, BladeCatalogue blades)
     {
         ArgumentNullException.ThrowIfNull(inventory);
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(catalogue);
+        ArgumentNullException.ThrowIfNull(blades);
         catalogue.Validate();
+        blades.Validate();
         inventory.Validate();
         project.Validate();
 
-        var settings = new JobSettings(project.KerfWidth, project.Unit);
+        var blade = blades.Resolve(project.BladeId
+            ?? throw new ArgumentException("Select a blade for the project before optimizing."));
+        var settings = new JobSettings(blade.Id, blade.Name, blade.Kerf, project.Unit);
         var materials = catalogue.Materials.ToDictionary(material => material.Id);
         Material Resolve(Guid id) => materials.TryGetValue(id, out var material) ? material
             : throw new ArgumentException($"Material {id} is missing from the catalogue. Select an available material.");

@@ -108,7 +108,7 @@ there is no dependency on Visual Studio designer-generated application code.
 ## Models and Units
 
 **All lengths are stored in millimetres**, including width, height, thickness,
-edge trim, and kerf. `Project.Unit` selects project input/display units only;
+edge trim, blade diameter and kerf. `Project.Unit` selects project input/display units only;
 changing it never rescales stored values. Use `UnitConversion.ToMillimetres`
 and `FromMillimetres` at application boundaries; one inch is exactly 25.4 mm.
 
@@ -120,7 +120,10 @@ and `FromMillimetres` at application boundaries; one inch is exactly 25.4 mm.
 | Scrap | Same stock fields, plus nullable OriginPanelId |
 | Part | Id, Width, Height, Quantity, Label, MaterialId, EdgeBandTop/Bottom/Left/Right, GroupTag |
 | Inventory | Separate typed Panels and Scraps lists |
-| Project | Parts list, KerfWidth, Unit |
+| Brand | Id, Name; immutable, names unique ignoring case |
+| Blade | Id, Name, Diameter (mm), Teeth, Kerf (mm), optional BrandId, BrandCode; immutable |
+| BladeCatalogue | Brands and Blades lists; unique IDs, brand references must resolve |
+| Project | Parts list, optional BladeId, Unit |
 
 Panels, scraps and parts reference a catalogue material by stable ID. Name, Type
 and Thickness are resolved from the current catalogue, never overridden on an
@@ -136,8 +139,10 @@ no UI color types are stored in Core.
 Validation and defaults:
 
 - Width, height, and thickness must be finite and strictly positive.
-- Kerf and trim must be finite and nonnegative. **Zero kerf is valid** and is
-  the default. EdgeTrim defaults to zero.
+- Trim must be finite and nonnegative; EdgeTrim defaults to zero.
+- Blade kerf must be finite and nonnegative (**zero kerf is valid**); diameter
+  must be positive and teeth at least 1. Blade names cannot be blank; BrandCode
+  defaults to empty text. A project's kerf always comes from its selected blade.
 - Usable dimensions are width/height minus twice trim. Excessive trim is valid
   metadata; if either usable dimension is nonpositive, IsUsable is false.
 - Stock quantity is an integer >= 0; part quantity is an integer >= 1. Both
@@ -167,9 +172,10 @@ Repository defaults:
 ```text
 %AppData%/PanelCut/inventory.json
 %AppData%/PanelCut/materials.json
+%AppData%/PanelCut/blades.json
 ```
 
-`InventoryStore` and `MaterialStore` use `Environment.SpecialFolder.ApplicationData`
+`InventoryStore`, `MaterialStore` and `BladeStore` use `Environment.SpecialFolder.ApplicationData`
 and `Path.Combine`. Pass explicit constructor paths for isolated tests.
 `ProjectStore` always takes a caller-selected path, intended to have the
 `*.panelcut.json` extension. The File menu uses native Save/Open dialogs.
@@ -193,7 +199,9 @@ moving them to another installation: matching names alone do not resolve IDs.
   should call InventoryStore.SaveAsync.** No other application feature should
   write Inventory. MaterialStore.SaveAsync is called only for committed manual
   Materials edits. Catalogue edits never write inventory/project files or mark a
-  project dirty. Optimize has no persistence calls.
+  project dirty. BladeStore.SaveAsync is called only for committed manual
+  Blades/Brands edits, which likewise never write or dirty the project.
+  Optimize has no persistence calls.
 - Completing a valid new part automatically saves the current project only if
   it already has a file path. Untitled projects require their first manual save.
   Existing-part edits, deletions and settings changes retain manual saving;
@@ -222,8 +230,9 @@ var inventoryStore = new InventoryStore();
 var inventory = await inventoryStore.LoadAsync();
 var catalogue = await new MaterialStore().LoadAsync();
 var material = catalogue.Materials.First(); // Choose an existing catalogue entry.
+var blades = await new BladeStore().LoadAsync();
 
-var project = new Project { KerfWidth = 0 };
+var project = new Project { BladeId = blades.Blades.First().Id };
 project.Parts.Add(new Part(600, 300, material.Id, quantity: 2) { Label = "Shelf" });
 
 var projectStore = new ProjectStore();
@@ -242,8 +251,8 @@ use the defaults above when omitted. Required lists cannot be null; IDs are
 preserved, never regenerated to repair invalid files. Derived usable dimensions
 and resolved material values are not serialized in stock or parts.
 
-**Inventory and project files now require schema version 2. Older files are
-incompatible and are rejected without modification; there is no migration.**
+**Inventory files require schema version 2 and project files schema version 3.
+Older files are incompatible and are rejected without modification; there is no migration.**
 To start fresh, preserve the old files separately and select new repository
 paths, or move the old inventory out of its configured path before restarting.
 Missing material IDs remain visible for manual reassignment; Optimize fails
@@ -261,6 +270,30 @@ Id, Name, Type and Thickness:
       "name": "Oak",
       "type": "Plywood",
       "thickness": 18
+    }
+  ]
+}
+```
+
+The independent blades document uses schema version 1 and stores brands and
+blades together, so a blade and a brand created with it are saved atomically.
+Blade `brandId` and `brandCode` are optional:
+
+```json
+{
+  "schemaVersion": 1,
+  "brands": [
+    { "id": "4f0c2d7e-5a36-4c1b-9d2f-8e1a6b3c9d10", "name": "Freud" }
+  ],
+  "blades": [
+    {
+      "id": "9b8e7c6d-1a2b-4c3d-8e9f-0a1b2c3d4e5f",
+      "name": "Fine crosscut",
+      "diameter": 250,
+      "teeth": 80,
+      "kerf": 3.2,
+      "brandId": "4f0c2d7e-5a36-4c1b-9d2f-8e1a6b3c9d10",
+      "brandCode": "LU3D 1000"
     }
   ]
 }
@@ -294,7 +327,7 @@ Project example:
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "parts": [
     {
       "id": "d26ea2fd-9902-4cc1-85a5-f33e48dc25ea",
@@ -310,22 +343,24 @@ Project example:
       "groupTag": "Kitchen"
     }
   ],
-  "kerfWidth": 0,
+  "bladeId": "9b8e7c6d-1a2b-4c3d-8e9f-0a1b2c3d4e5f",
   "unit": "inches"
 }
 ```
 
 The example part is 254 x 127 mm, displayed as 10 x 5 inches. A project with
-`parts: []` and omitted settings loads with zero kerf and millimetres.
+`parts: []` and omitted settings loads with no blade selected and millimetres.
 
 ## Read-Only Optimization
 
-The public entry point is `PanelOptimizer.OptimizePanels(Inventory, Project, MaterialCatalogue)`:
+The public entry point is `PanelOptimizer.OptimizePanels(Inventory, Project, MaterialCatalogue, BladeCatalogue)`.
+The project's `BladeId` must resolve in the blade catalogue; its kerf is used for
+every cut and recorded with the blade name in `result.Settings`:
 
 ```csharp
 using PanelCut.Core.Optimization;
 
-var result = new PanelOptimizer().OptimizePanels(inventory, project, catalogue);
+var result = new PanelOptimizer().OptimizePanels(inventory, project, catalogue, blades);
 var sheetsUsed = result.StockItemsUsed;
 var jobCost = result.TotalCost;
 var wastePercent = result.WastePercentage;
@@ -458,7 +493,15 @@ files or directories.
   stock deletion asks for one confirmation and saves the entire batch atomically.
   Unselected and filtered-out rows are preserved. **Reload stock** reloads the
   independent inventory file. Invalid stock drafts prevent material-filter changes.
-4. Open **Project**, add parts, select their materials and set kerf and units.
+4. Open **Blades** and add your saw blades (name, brand, brand code, diameter,
+  teeth, kerf; all mm). In the Brand cell pick an existing brand from the
+  dropdown, or type a new name and choose **Create "..."** (Enter picks the
+  highlighted entry); the new brand is saved together with the blade. Names
+  match existing brands ignoring case. The **Brands** list renames brands
+  (every blade follows) and deletes only brands no blade uses. Deleting a blade
+  used by a project leaves the project showing "Missing blade".
+5. Open **Project**, select the blade (its kerf is shown in the project unit),
+  add parts, select their materials and set units.
   Part labels remain user-controlled. Width, height, readonly
   thickness and kerf use the selected project unit; stock stays in mm. Dropdown
   option descriptions retain catalogue thickness in mm. Use the
@@ -467,12 +510,13 @@ files or directories.
   Completing a valid new part automatically saves an already-saved project.
   Untitled projects still require File > Save. Existing-part edits and deletions
   remain unsaved until File > Save or the next valid part addition.
-5. Use **File > Save/Open/New**, or Ctrl+S/Ctrl+O/Ctrl+N. Unsaved project changes
+6. Use **File > Save/Open/New**, or Ctrl+S/Ctrl+O/Ctrl+N. Unsaved project changes
   prompt before replacement or closing. Save As selects another project path;
-  selecting either repository path is rejected. Failed opens retain the current
+  selecting any repository path is rejected. Failed opens retain the current
   document. Projects never embed or save inventory.
-6. Click **Optimize**. The UI is disabled while the engine runs off the UI
-  thread. Layout shows sheet count, waste, cost and unplaced count. Use the
+7. Click **Optimize**. It is refused until the project has an existing blade.
+  The UI is disabled while the engine runs off the UI
+  thread. Layout shows sheet count, waste, cost, unplaced count and blade/kerf. Use the
   sheet selector or arrows to navigate. Expand Unplaced parts for unmet demand.
 
 Layouts fit the viewport automatically. The outer trim uses a warm hatch,
@@ -504,8 +548,8 @@ dotnet run --file scripts/VerifyDesktop.cs
 
 The harness uses unique temporary materials/inventory/project paths and prints the path
 containing its PNG screenshots. It covers stock/part row commits, invalid values,
-cancelled additions, locked-file save failures and retry, units, kerf zero and
-negative input, scrap origin/trim/quantity validation, deletion, independent
+cancelled additions, locked-file save failures and retry, units, blade
+selection and missing blades, scrap origin/trim/quantity validation, deletion, independent
 project operations, corrupt inventory recovery, optimization immutability,
 sheet navigation and nonblank rendering at 1280x800 and 960x640. It also covers
 material creation/editing, real dropdown selections, label autofill/cancel,
@@ -514,7 +558,9 @@ corrupt catalogue recovery, unresolved references, old schema rejection and CLI
 option validation. Additional checks cover separate stock tabs, material filters
 and defaults, material reassignment, duplicate names, missing references, batch
 deletion and failed-delete retry, conditional new-part autosave, failed autosave
-recovery, and serialized Save/New actions. It drives
+recovery, and serialized Save/New actions. Blade checks cover the brand
+dropdown (create, filter, case-insensitive reuse), cancelled new brands, brand
+rename/delete guards, blade validation and corrupt blades recovery. It drives
 WPF controls in-process; native Save/Open dialog selection and unsaved-change
 confirmation button interactions, stock deletion confirmation, and physical
 Ctrl/Shift selection gestures remain manual checks.
@@ -525,9 +571,9 @@ For an isolated interactive run, without accessing normal AppData repositories:
 dotnet run --project src/PanelCut.App --configuration Release -- --inventory-path "$env:TEMP\PanelCut-ManualTest\inventory.json"
 ```
 
-With `--inventory-path`, the catalogue defaults to a sibling `materials.json`.
-Use `--materials-path <path>` to specify a different catalogue; both options are
-independent and can appear in either order. Repository paths must differ.
-Without overrides, both normal AppData paths are used.
+With `--inventory-path`, the catalogue and blades default to sibling `materials.json`
+and `blades.json`. Use `--materials-path <path>` and `--blades-path <path>` to specify
+other files; all options are independent and can appear in any order. Repository paths must differ.
+Without overrides, the normal AppData paths are used.
 No demo stock is seeded. Next is step 5: manual drag reorganization, undo/redo,
 CSV import and PDF/PNG/CSV export.

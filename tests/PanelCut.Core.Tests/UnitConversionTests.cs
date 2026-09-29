@@ -19,11 +19,11 @@ public class UnitConversionTests
     [Fact]
     public void UnitToggleDoesNotChangePhysicalDimensions()
     {
-        var project = new Project { KerfWidth = 3.2 };
+        var project = TestMaterials.Project(3.2);
         project.Parts.Add(new Part(254, 127, TestMaterials.Id("Oak")));
         project.Unit = LengthUnit.Inches;
         Assert.Equal(254, project.Parts[0].Width);
-        Assert.Equal(3.2, project.KerfWidth);
+        Assert.Equal(TestMaterials.BladeId(3.2), project.BladeId);
         Assert.Equal(10, UnitConversion.FromMillimetres(project.Parts[0].Width, project.Unit));
     }
 

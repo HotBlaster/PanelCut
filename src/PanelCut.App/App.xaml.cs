@@ -10,7 +10,7 @@ public partial class App : Application
 		try
 		{
 			var paths = ParsePaths(args.Args);
-			MainWindow = new MainWindow(paths.Inventory, paths.Materials);
+			MainWindow = new MainWindow(paths.Inventory, paths.Materials, paths.Blades);
 			MainWindow.Show();
 		}
 		catch (Exception exception)
@@ -20,18 +20,19 @@ public partial class App : Application
 		}
 	}
 
-	internal static (string? Inventory, string? Materials) ParsePaths(string[] arguments)
+	internal static (string? Inventory, string? Materials, string? Blades) ParsePaths(string[] arguments)
 	{
 		var options = new Dictionary<string, string>(StringComparer.Ordinal);
 		for (var index = 0; index < arguments.Length; index += 2)
 		{
 			if (index + 1 >= arguments.Length
-				|| arguments[index] is not ("--inventory-path" or "--materials-path")
+				|| arguments[index] is not ("--inventory-path" or "--materials-path" or "--blades-path")
 				|| string.IsNullOrWhiteSpace(arguments[index + 1])
 				|| arguments[index + 1].StartsWith("--", StringComparison.Ordinal)
 				|| !options.TryAdd(arguments[index], arguments[index + 1]))
-				throw new ArgumentException("Usage: PanelCut.App [--inventory-path <inventory.json>] [--materials-path <materials.json>]");
+				throw new ArgumentException("Usage: PanelCut.App [--inventory-path <inventory.json>] [--materials-path <materials.json>] [--blades-path <blades.json>]");
 		}
-		return (options.GetValueOrDefault("--inventory-path"), options.GetValueOrDefault("--materials-path"));
+		return (options.GetValueOrDefault("--inventory-path"), options.GetValueOrDefault("--materials-path"),
+			options.GetValueOrDefault("--blades-path"));
 	}
 }

@@ -10,28 +10,63 @@ public class OptimizationTests
     public void CatalogueChangesAffectReferencesButNotEarlierResults()
     {
         var catalogue = TestMaterials.Catalogue();
+        var blades = TestMaterials.Blades();
         var selected = catalogue.Resolve(TestMaterials.Id("Oak"));
         var equivalent = new Material("Oak", "Plywood", 18);
         catalogue.Materials.Add(equivalent);
         var inventory = Stock(new Panel(100, 100, selected.Id) { Label = "Stored label" });
         var project = Job(new Part(100, 100, equivalent.Id));
         var optimizer = new PanelOptimizer();
-        var original = optimizer.OptimizePanels(inventory, project, catalogue);
+        var original = optimizer.OptimizePanels(inventory, project, catalogue, blades);
         Assert.True(original.IsComplete);
         catalogue.Materials.Remove(selected);
         catalogue.Materials.Add(new Material("Oak", "Plywood", 12) { Id = selected.Id });
-        Assert.False(optimizer.OptimizePanels(inventory, project, catalogue).IsComplete);
+        Assert.False(optimizer.OptimizePanels(inventory, project, catalogue, blades).IsComplete);
         catalogue.Materials.RemoveAll(material => material.Id == selected.Id);
         catalogue.Materials.Add(new Material("Oak", "Solid", 18) { Id = selected.Id });
-        Assert.False(optimizer.OptimizePanels(inventory, project, catalogue).IsComplete);
+        Assert.False(optimizer.OptimizePanels(inventory, project, catalogue, blades).IsComplete);
         project.Parts[0].MaterialId = selected.Id;
-        var updated = optimizer.OptimizePanels(inventory, project, catalogue);
+        var updated = optimizer.OptimizePanels(inventory, project, catalogue, blades);
         Assert.True(updated.IsComplete);
         Assert.Equal("Solid", updated.Sheets[0].Stock.MaterialType);
         Assert.Equal("Plywood", original.Sheets[0].Stock.MaterialType);
         Assert.Equal("Stored label", original.Sheets[0].Stock.Label);
         catalogue.Materials.RemoveAll(material => material.Id == selected.Id);
-        Assert.Throws<ArgumentException>(() => optimizer.OptimizePanels(inventory, project, catalogue));
+        Assert.Throws<ArgumentException>(() => optimizer.OptimizePanels(inventory, project, catalogue, blades));
+    }
+
+    [Fact]
+    public void KerfComesFromSelectedBladeAndFollowsBladeEdits()
+    {
+        var blades = new BladeCatalogue();
+        var blade = new Blade("Rip", 250, 24, 1);
+        blades.Blades.Add(blade);
+        var inventory = Stock(new Panel(101, 100, TestMaterials.Id("Oak", 18)));
+        var project = Job(new Part(50, 100, TestMaterials.Id("Oak"), 2));
+        project.BladeId = blade.Id;
+        var optimizer = new PanelOptimizer();
+        var result = optimizer.OptimizePanels(inventory, project, TestMaterials.Catalogue(), blades);
+        Assert.Equal(new JobSettings(blade.Id, "Rip", 1, LengthUnit.Millimetres), result.Settings);
+        Assert.Equal(2, Assert.Single(result.Sheets).Placements.Count);
+        blades.Blades[0] = new Blade("Rip wide", 250, 24, 3) { Id = blade.Id };
+        result = optimizer.OptimizePanels(inventory, project, TestMaterials.Catalogue(), blades);
+        Assert.Equal(("Rip wide", 3d), (result.Settings.BladeName, result.Settings.KerfWidth));
+        Assert.Single(Assert.Single(result.Sheets).Placements);
+    }
+
+    [Fact]
+    public void MissingOrUnselectedBladeBlocksOptimization()
+    {
+        var optimizer = new PanelOptimizer();
+        var inventory = Stock(new Panel(100, 100, TestMaterials.Id("Oak", 18)));
+        var project = new Project();
+        project.Parts.Add(new Part(50, 50, TestMaterials.Id("Oak")));
+        var error = Assert.Throws<ArgumentException>(() => optimizer.OptimizePanels(inventory, project, TestMaterials.Catalogue(), TestMaterials.Blades()));
+        Assert.Contains("Select a blade", error.Message);
+        project.BladeId = Guid.NewGuid();
+        error = Assert.Throws<ArgumentException>(() => optimizer.OptimizePanels(inventory, project, TestMaterials.Catalogue(), TestMaterials.Blades()));
+        Assert.Contains("missing", error.Message);
+        Assert.Throws<ArgumentNullException>(() => optimizer.OptimizePanels(inventory, project, TestMaterials.Catalogue(), null!));
     }
 
     [Theory]
@@ -41,7 +76,7 @@ public class OptimizationTests
     {
         var inventory = new Inventory();
         inventory.Panels.Add(new Panel(100, 100, TestMaterials.Id("Oak", 18)));
-        var project = new Project { KerfWidth = kerf };
+        var project = TestMaterials.Project(kerf);
         project.Parts.Add(new Part(50, 100, TestMaterials.Id("Oak"), 2));
 
         var result = new TestOptimizer().OptimizePanels(inventory, project);
@@ -231,7 +266,7 @@ public class OptimizationTests
     public void EmptyJobsAndMissingStockHaveWellDefinedResults()
     {
         var optimizer = new TestOptimizer();
-        var result = optimizer.OptimizePanels(Stock(new Panel(100, 100, TestMaterials.Id("Oak", 18))), new Project());
+        var result = optimizer.OptimizePanels(Stock(new Panel(100, 100, TestMaterials.Id("Oak", 18))), TestMaterials.Project());
         Assert.True(result.IsComplete);
         Assert.Empty(result.Sheets);
         Assert.Equal(0, result.WastePercentage);
@@ -283,7 +318,7 @@ public class OptimizationTests
         part.Width = 30;
         inventory.Scraps.Clear();
         project.Parts.Clear();
-        project.KerfWidth = 8;
+        project.BladeId = TestMaterials.BladeId(8);
         Assert.Equal(snapshot, JsonSerializer.Serialize(result));
         Assert.Throws<NotSupportedException>(() => ((IList<SheetLayout>)result.Sheets).Clear());
         Assert.Throws<NotSupportedException>(() => ((IList<PlacedPart>)result.Sheets[0].Placements).Clear());
@@ -307,14 +342,14 @@ public class OptimizationTests
     }
 
     [Fact]
-    public void RejectsInvalidArgumentsAndNegativeKerf()
+    public void RejectsInvalidArguments()
     {
         var optimizer = new TestOptimizer();
-        Assert.Throws<ArgumentNullException>(() => optimizer.OptimizePanels(null!, new Project()));
+        Assert.Throws<ArgumentNullException>(() => optimizer.OptimizePanels(null!, TestMaterials.Project()));
         Assert.Throws<ArgumentNullException>(() => optimizer.OptimizePanels(new Inventory(), null!));
-        var project = new Project();
-        Assert.Throws<ArgumentOutOfRangeException>(() => project.KerfWidth = -1);
-        Assert.Equal(0, project.KerfWidth);
+        var project = TestMaterials.Project();
+        Assert.Throws<ArgumentException>(() => project.BladeId = Guid.Empty);
+        Assert.Equal(TestMaterials.BladeId(0), project.BladeId);
         var inventory = Stock(new Panel(100, 100, TestMaterials.Id("Oak", 18)));
         inventory.Panels.Add(inventory.Panels[0]);
         Assert.Throws<ArgumentException>(() => optimizer.OptimizePanels(inventory, project));
@@ -351,7 +386,7 @@ public class OptimizationTests
             var inventory = Stock(new Panel(200, 150, TestMaterials.Id("Oak", 18), 3) { EdgeTrim = 5 },
                 new Scrap(120, 90, TestMaterials.Id("Oak", 18), 2) { EdgeTrim = 2, Priority = -1 },
                 new Panel(200, 150, TestMaterials.Id("Birch", 18), 2));
-            var project = new Project { KerfWidth = kerf };
+            var project = TestMaterials.Project(kerf);
             for (var index = 0; index < 18; index++)
                 project.Parts.Add(new Part(random.Next(15, 110) + 0.25, random.Next(15, 110) + 0.5,
                     TestMaterials.Id(index % 3 == 0 ? "Birch" : "Oak"), random.Next(1, 4)));
@@ -386,7 +421,7 @@ public class OptimizationTests
 
     private static Project Job(Part part, double kerf = 0)
     {
-        var project = new Project { KerfWidth = kerf };
+        var project = TestMaterials.Project(kerf);
         project.Parts.Add(part);
         return project;
     }

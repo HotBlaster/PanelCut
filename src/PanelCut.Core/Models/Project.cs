@@ -3,7 +3,7 @@ namespace PanelCut.Core.Models;
 public sealed class Project
 {
     public List<Part> Parts { get; } = [];
-    public double KerfWidth { get; set => field = Validation.NonNegative(value, nameof(KerfWidth)); }
+    public Guid? BladeId { get; set => field = value is { } id ? Validation.Id(id) : null; }
     public LengthUnit Unit { get; set => field = Validation.Defined(value); } = LengthUnit.Millimetres;
 
     public void Validate()

@@ -27,20 +27,22 @@ public partial class MainWindow : Window
     private Task stockSave = Task.CompletedTask;
     private Task projectSave = Task.CompletedTask;
     private Inventory? pendingStockCandidate;
-    private string kerfDisplay = "0";
     private OptimizationResult? result;
     private bool materialPending;
     private Task materialSave = Task.CompletedTask;
     private MaterialCatalogue? pendingMaterialCandidate;
+    private bool bladePending;
+    private Task bladeSave = Task.CompletedTask;
+    private BladeCatalogue? pendingBladeCandidate;
     private Guid panelMaterialId;
     private Guid scrapMaterialId;
     private bool changingMaterialFilter;
 
     public MainWindow() : this(null) { }
 
-    public MainWindow(string? inventoryPath, string? materialsPath = null)
+    public MainWindow(string? inventoryPath, string? materialsPath = null, string? bladesPath = null)
     {
-        workspace = new WorkspaceViewModel(inventoryPath, materialsPath);
+        workspace = new WorkspaceViewModel(inventoryPath, materialsPath, bladesPath);
         updating = true;
         InitializeComponent();
         ConfigureGrids();
@@ -61,6 +63,12 @@ public partial class MainWindow : Window
         MaterialsGrid.ItemsSource = workspace.Materials;
         MaterialsLocation.Text = workspace.MaterialsPath;
         MaterialsLocation.ToolTip = workspace.MaterialsPath;
+        BladesGrid.DataContext = workspace;
+        BladesGrid.ItemsSource = workspace.BladeRows;
+        BrandsGrid.ItemsSource = workspace.BrandRows;
+        BladesLocation.Text = workspace.BladesPath;
+        BladesLocation.ToolTip = workspace.BladesPath;
+        RefreshBladeSelector();
         PanelsGrid.BeginningEdit += StockBeginningEdit;
         ScrapsGrid.BeginningEdit += StockBeginningEdit;
         CommandBindings.Add(new CommandBinding(ApplicationCommands.New, async (_, _) => await NewProjectAsync()));
@@ -97,6 +105,7 @@ public partial class MainWindow : Window
             AddText(grid, "Status", "Usability", 110, true);
         }
         AddText(ScrapsGrid, "Origin panel ID", "OriginPanelId", 280);
+        AddText(BrandsGrid, "Name", "Name", 220);
         AddText(UnplacedGrid, "Label", "Part.Label", 180, true);
         AddText(UnplacedGrid, "Material", "Part.Material", 130, true);
         AddText(UnplacedGrid, "Remaining", "Quantity", 100, true, numeric: true);
@@ -136,9 +145,12 @@ public partial class MainWindow : Window
     private async void WindowLoaded(object sender, RoutedEventArgs args)
     {
         await LoadMaterialsAsync();
+        await LoadBladesAsync();
         await LoadStockAsync();
         if (!workspace.MaterialsReady)
             ShowStatus("Materials could not be loaded. Reload the catalogue in Materials before editing or optimizing.", true);
+        else if (!workspace.BladesReady)
+            ShowStatus("Blades could not be loaded. Reload blades in Blades before editing or optimizing.", true);
     }
 
     private async Task LoadMaterialsAsync()
@@ -159,10 +171,10 @@ public partial class MainWindow : Window
 
     private void MaterialBeginningEdit(object? sender, DataGridBeginningEditEventArgs args)
     {
-        if (busy || !projectSave.IsCompleted || !materialSave.IsCompleted || stockPending || !CommitProject())
+        if (busy || !projectSave.IsCompleted || !materialSave.IsCompleted || stockPending || bladePending || !CommitProject())
         {
             args.Cancel = true;
-            ShowStatus("Save or cancel the current stock/project edit before editing materials.", true);
+            ShowStatus("Save or cancel the current stock/blade/project edit before editing materials.", true);
             return;
         }
         materialPending = true;
@@ -264,6 +276,196 @@ public partial class MainWindow : Window
             await LoadMaterialsAsync();
     }
 
+    private async Task LoadBladesAsync()
+    {
+        SetBusy(true, "Loading blades...");
+        try
+        {
+            await workspace.LoadBladesAsync();
+            bladePending = false;
+            pendingBladeCandidate = null;
+            ClearLayout();
+            ShowStatus("Blades loaded.");
+        }
+        catch (Exception exception) { ShowError(exception); }
+        finally
+        {
+            RefreshBladeSelector();
+            SetBusy(false);
+        }
+    }
+
+    private void BladeBeginningEdit(object? sender, DataGridBeginningEditEventArgs args)
+    {
+        if (busy || !projectSave.IsCompleted || !bladeSave.IsCompleted || stockPending || materialPending || !CommitProject())
+        {
+            args.Cancel = true;
+            ShowStatus("Save or cancel the current stock/material/project edit before editing blades.", true);
+            return;
+        }
+        bladePending = true;
+        pendingBladeCandidate = null;
+    }
+
+    private void BladeRowEnding(object sender, DataGridRowEditEndingEventArgs args)
+    {
+        if (updating)
+            return;
+        if (args.EditAction == DataGridEditAction.Cancel)
+        {
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                workspace.RestoreBladeRows();
+                bladePending = false;
+                pendingBladeCandidate = null;
+                RefreshState();
+            });
+            return;
+        }
+        if (!bladeSave.IsCompleted)
+        {
+            args.Cancel = true;
+            return;
+        }
+        try
+        {
+            args.Row.BindingGroup?.UpdateSources();
+            bladeSave = PersistBladesAsync(workspace.BladeCandidate());
+        }
+        catch (Exception exception)
+        {
+            args.Cancel = true;
+            bladePending = true;
+            ShowError(exception);
+        }
+    }
+
+    private async Task PersistBladesAsync(BladeCatalogue candidate)
+    {
+        bladePending = true;
+        pendingBladeCandidate = candidate;
+        await Dispatcher.Yield(DispatcherPriority.Background);
+        SetBusy(true, "Saving blades...");
+        try
+        {
+            await workspace.CommitManualBladeEditAsync(candidate);
+            bladePending = false;
+            pendingBladeCandidate = null;
+            ClearLayout();
+            RefreshBladeSelector();
+            ShowStatus("Blades saved. Project and inventory files unchanged.");
+        }
+        catch (Exception exception) { ShowStatus($"Blades NOT saved: {exception.Message} Save to retry, or Cancel edit.", true); }
+        finally { SetBusy(false); }
+    }
+
+    private bool CommitBladeGrids()
+    {
+        foreach (var grid in new[] { BladesGrid, BrandsGrid })
+            if (!grid.CommitEdit(DataGridEditingUnit.Cell, true) || !grid.CommitEdit(DataGridEditingUnit.Row, true))
+                return false;
+        return true;
+    }
+
+    private async void AddBladeClick(object sender, RoutedEventArgs args)
+    {
+        if (!await ReadyAsync() || !workspace.BladesReady || !CommitProject())
+            return;
+        var row = workspace.CreateBladeRow();
+        workspace.BladeRows.Add(row);
+        bladePending = true;
+        BeginRow(BladesGrid, row);
+    }
+
+    private async void AddBrandClick(object sender, RoutedEventArgs args)
+    {
+        if (!await ReadyAsync() || !workspace.BladesReady || !CommitProject())
+            return;
+        var row = new BrandRow();
+        workspace.BrandRows.Add(row);
+        bladePending = true;
+        BeginRow(BrandsGrid, row);
+    }
+
+    private async void DeleteBladesClick(object sender, RoutedEventArgs args)
+    {
+        var ids = BladesGrid.SelectedItems.OfType<BladeRow>().Select(row => row.Id).ToArray();
+        if (!await ReadyAsync() || !workspace.BladesReady || ids.Length == 0)
+            return;
+        var warning = workspace.Project.BladeId is { } used && ids.Contains(used) ? "\n\nThe current project uses one of them and will need another blade." : "";
+        if (MessageBox.Show(this, $"Delete {ids.Length} selected blade(s)?{warning}", "PanelCut", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+        await DeleteBladesAsync(ids);
+    }
+
+    private async Task DeleteBladesAsync(IReadOnlyCollection<Guid> ids)
+    {
+        CancelGrid(BladesGrid);
+        try
+        {
+            var candidate = workspace.BladeCandidate();
+            candidate.Blades.RemoveAll(blade => ids.Contains(blade.Id));
+            bladeSave = PersistBladesAsync(candidate);
+            await bladeSave;
+        }
+        catch (Exception exception) { ShowError(exception); }
+    }
+
+    private async void DeleteBrandsClick(object sender, RoutedEventArgs args)
+    {
+        var ids = BrandsGrid.SelectedItems.OfType<BrandRow>().Select(row => row.Id).ToArray();
+        if (!await ReadyAsync() || !workspace.BladesReady || ids.Length == 0)
+            return;
+        if (MessageBox.Show(this, $"Delete {ids.Length} selected brand(s)?", "PanelCut", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+        await DeleteBrandsAsync(ids);
+    }
+
+    private async Task DeleteBrandsAsync(IReadOnlyCollection<Guid> ids)
+    {
+        CancelGrid(BrandsGrid);
+        try
+        {
+            bladeSave = PersistBladesAsync(workspace.BrandDeletionCandidate(ids));
+            await bladeSave;
+        }
+        catch (Exception exception) { ShowError(exception); }
+    }
+
+    private async void RetryBladeClick(object sender, RoutedEventArgs args)
+    {
+        if (!CommitBladeGrids())
+            return;
+        await bladeSave;
+        if (!workspace.BladesReady || busy)
+            return;
+        try
+        {
+            bladeSave = PersistBladesAsync(pendingBladeCandidate ?? workspace.BladeCandidate());
+            await bladeSave;
+        }
+        catch (Exception exception) { ShowError(exception); }
+    }
+
+    private void CancelBladeClick(object sender, RoutedEventArgs args)
+    {
+        if (!bladeSave.IsCompleted)
+            return;
+        CancelGrid(BladesGrid);
+        CancelGrid(BrandsGrid);
+        workspace.RestoreBladeRows();
+        bladePending = false;
+        pendingBladeCandidate = null;
+        RefreshState();
+        ShowStatus("Blade edit cancelled; blades unchanged.");
+    }
+
+    private async void ReloadBladesClick(object sender, RoutedEventArgs args)
+    {
+        if (await ReadyAsync() && CommitProject())
+            await LoadBladesAsync();
+    }
+
     private async Task LoadStockAsync()
     {
         SetBusy(true, "Loading inventory...");
@@ -278,9 +480,29 @@ public partial class MainWindow : Window
         finally { SetBusy(false); }
     }
 
-    private double KerfMillimetres() => KerfInput.Text == kerfDisplay
-        ? workspace.Project.KerfWidth
-        : UnitConversion.ToMillimetres(EditableRow.Number(KerfInput.Text, "Kerf"), workspace.Project.Unit);
+    private Guid? SelectedBladeId() => BladeInput.SelectedValue is Guid id ? id : workspace.Project.BladeId;
+
+    private string UnitLabel => workspace.Project.Unit == LengthUnit.Millimetres ? "mm" : "inch";
+
+    private void RefreshBladeSelector()
+    {
+        var wasUpdating = updating;
+        updating = true;
+        BladeInput.ItemsSource = workspace.ProjectBladeOptions();
+        BladeInput.SelectedValue = workspace.Project.BladeId;
+        updating = wasUpdating;
+        KerfDisplay.Text = workspace.ProjectBlade is { } blade
+            ? $"Kerf {EditableRow.Format(UnitConversion.FromMillimetres(blade.Kerf, workspace.Project.Unit))} {UnitLabel}"
+            : workspace.Project.BladeId is null ? "Kerf: select a blade" : "Kerf: blade missing";
+    }
+
+    private void BladeChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (updating)
+            return;
+        CommitProject();
+        RefreshBladeSelector();
+    }
 
     private bool CommitProject()
     {
@@ -292,7 +514,6 @@ public partial class MainWindow : Window
                 return false;
             if (CommitProjectChanges())
                 ClearLayout();
-            kerfDisplay = KerfInput.Text;
             RefreshState();
             return true;
         }
@@ -303,7 +524,7 @@ public partial class MainWindow : Window
     {
         var existingIds = workspace.Project.Parts.Select(part => part.Id).ToHashSet();
         var hasNewParts = workspace.Parts.Any(part => !existingIds.Contains(part.Id));
-        var changed = workspace.CommitProject(KerfMillimetres(), workspace.Project.Unit);
+        var changed = workspace.CommitProject(SelectedBladeId(), workspace.Project.Unit);
         if (changed && hasNewParts && workspace.ProjectPath is { } path)
             projectSave = PersistNewPartsAsync(path);
         return changed;
@@ -352,7 +573,6 @@ public partial class MainWindow : Window
             ((PartRow)args.Row.Item).ToModel();
             if (CommitProjectChanges())
                 ClearLayout();
-            kerfDisplay = KerfInput.Text;
             args.Row.ClearValue(ToolTipProperty);
             RefreshState();
         }
@@ -452,11 +672,18 @@ public partial class MainWindow : Window
             await materialSave;
         if (!stockSave.IsCompleted)
             await stockSave;
+        if (!bladeSave.IsCompleted)
+            await bladeSave;
         if (busy)
             return false;
         if (materialPending)
         {
             ShowStatus("Materials have an unsaved edit. Save or cancel it in Materials.", true);
+            return false;
+        }
+        if (bladePending)
+        {
+            ShowStatus("Blades have an unsaved edit. Save or cancel it in Blades.", true);
             return false;
         }
         if (stockPending)
@@ -615,11 +842,6 @@ public partial class MainWindow : Window
         grid.Focus();
         grid.BeginEdit();
     }
-    private void SettingsChanged(object sender, KeyboardFocusChangedEventArgs args)
-    {
-        if (!updating)
-            CommitProject();
-    }
     private void UnitChanged(object sender, SelectionChangedEventArgs args)
     {
         if (updating || UnitInput.SelectedIndex < 0)
@@ -632,7 +854,7 @@ public partial class MainWindow : Window
             updating = false;
             return;
         }
-        if (workspace.CommitProject(workspace.Project.KerfWidth, next))
+        if (workspace.CommitProject(workspace.Project.BladeId, next))
             ClearLayout();
         workspace.RefreshPartRows();
         RefreshProjectControls();
@@ -645,6 +867,7 @@ public partial class MainWindow : Window
     private void ExitClick(object sender, RoutedEventArgs args) => Close();
     private void OpenInventoryFolderClick(object sender, RoutedEventArgs args) => OpenConfigurationFolder(workspace.InventoryPath);
     private void OpenMaterialsFolderClick(object sender, RoutedEventArgs args) => OpenConfigurationFolder(workspace.MaterialsPath);
+    private void OpenBladesFolderClick(object sender, RoutedEventArgs args) => OpenConfigurationFolder(workspace.BladesPath);
 
     private void OpenConfigurationFolder(string filePath)
     {
@@ -714,7 +937,7 @@ public partial class MainWindow : Window
     }
     private bool ProjectHasDrafts()
     {
-        try { return workspace.HasProjectDrafts(KerfMillimetres(), workspace.Project.Unit); }
+        try { return workspace.HasProjectDrafts(SelectedBladeId(), workspace.Project.Unit); }
         catch (ArgumentException) { return true; }
     }
     private async Task<bool> ConfirmProjectAsync()
@@ -746,17 +969,26 @@ public partial class MainWindow : Window
 
     private async Task OptimizeAsync()
     {
-        if (!await ReadyAsync() || !workspace.InventoryReady || !workspace.MaterialsReady || !CommitProject())
+        if (!await ReadyAsync() || !workspace.InventoryReady || !workspace.MaterialsReady || !workspace.BladesReady || !CommitProject())
             return;
         await projectSave;
+        if (workspace.ProjectBlade is null)
+        {
+            Views.SelectedItem = ProjectTab;
+            BladeInput.Focus();
+            ShowStatus(workspace.Project.BladeId is null ? "Select a blade in Project before optimizing."
+                : "The project's blade was deleted. Select another blade in Project before optimizing.", true);
+            return;
+        }
         SetBusy(true, "Optimizing...");
         ClearLayout();
         try
         {
             var inventory = workspace.InventoryCandidate();
             var project = workspace.Project;
-            result = await Task.Run(() => new PanelOptimizer().OptimizePanels(inventory, project, workspace.Catalogue));
-            Metrics.Text = $"{result.StockItemsUsed} sheets   |   Waste {result.WastePercentage:F1}%   |   Cost {result.TotalCost:N2}   |   Unplaced {result.UnplacedParts.Sum(part => (long)part.Quantity)}";
+            var blades = workspace.Blades;
+            result = await Task.Run(() => new PanelOptimizer().OptimizePanels(inventory, project, workspace.Catalogue, blades));
+            Metrics.Text = $"{result.StockItemsUsed} sheets   |   Waste {result.WastePercentage:F1}%   |   Cost {result.TotalCost:N2}   |   Unplaced {result.UnplacedParts.Sum(part => (long)part.Quantity)}   |   {result.Settings.BladeName}, kerf {EditableRow.Format(result.Settings.KerfWidth)} mm";
             SheetSelector.ItemsSource = result.Sheets.Select((sheet, index) => $"{index + 1} / {result.Sheets.Count}   {sheet.Stock.Label}   {sheet.Stock.Material} / {sheet.Stock.MaterialType} / {sheet.Stock.Thickness:G} mm   {sheet.Stock.Kind} #{sheet.UnitIndex}   {sheet.Stock.Width:G} x {sheet.Stock.Height:G} mm").ToArray();
             SheetSelector.SelectedIndex = result.Sheets.Count > 0 ? 0 : -1;
             UnplacedGrid.ItemsSource = result.UnplacedParts;
@@ -861,6 +1093,11 @@ public partial class MainWindow : Window
                 Views.SelectedItem = MaterialsTab;
                 ShowStatus("Save or cancel the material edit before leaving Materials.", true);
             }
+            else if (bladePending && Views.SelectedItem != BladesTab)
+            {
+                Views.SelectedItem = BladesTab;
+                ShowStatus("Save or cancel the blade edit before leaving Blades.", true);
+            }
             RefreshState();
         }
     }
@@ -868,13 +1105,11 @@ public partial class MainWindow : Window
     {
         updating = true;
         UnitInput.SelectedIndex = workspace.Project.Unit == LengthUnit.Millimetres ? 0 : 1;
-        kerfDisplay = EditableRow.Format(UnitConversion.FromMillimetres(workspace.Project.KerfWidth, workspace.Project.Unit));
-        KerfInput.Text = kerfDisplay;
-        KerfUnit.Text = workspace.Project.Unit == LengthUnit.Millimetres ? "mm" : "inch";
-        PartsGrid.Columns[1].Header = $"Width ({KerfUnit.Text})";
-        PartsGrid.Columns[2].Header = $"Height ({KerfUnit.Text})";
-        PartsGrid.Columns[5].Header = $"Thickness ({KerfUnit.Text})";
+        PartsGrid.Columns[1].Header = $"Width ({UnitLabel})";
+        PartsGrid.Columns[2].Header = $"Height ({UnitLabel})";
+        PartsGrid.Columns[5].Header = $"Thickness ({UnitLabel})";
         updating = false;
+        RefreshBladeSelector();
         RefreshState();
     }
     private void RefreshState()
@@ -886,12 +1121,14 @@ public partial class MainWindow : Window
         Title = $"PanelCut - {name}{marker}";
         ProjectName.Text = name + marker;
         PartCount.Text = $"{workspace.Parts.Count} part rows";
-        OptimizeButton.IsEnabled = !busy && workspace.InventoryReady && workspace.MaterialsReady && workspace.Parts.Count > 0;
+        OptimizeButton.IsEnabled = !busy && workspace.InventoryReady && workspace.MaterialsReady && workspace.BladesReady && workspace.Parts.Count > 0;
         PartsGrid.IsEnabled = AddPartButton.IsEnabled = ImportPartsButton.IsEnabled = workspace.MaterialsReady;
         PanelsGrid.IsEnabled = ScrapsGrid.IsEnabled = workspace.InventoryReady && workspace.MaterialsReady;
         AddPanelButton.IsEnabled = AddScrapButton.IsEnabled = DeleteStockButton.IsEnabled = RetryEditButton.IsEnabled = workspace.InventoryReady && workspace.MaterialsReady;
         DeleteScrapsButton.IsEnabled = SaveScrapsButton.IsEnabled = workspace.InventoryReady && workspace.MaterialsReady;
         MaterialsGrid.IsEnabled = AddMaterialButton.IsEnabled = CommitMaterialButton.IsEnabled = workspace.MaterialsReady;
+        BladesGrid.IsEnabled = BrandsGrid.IsEnabled = AddBladeButton.IsEnabled = AddBrandButton.IsEnabled = BladeInput.IsEnabled
+            = DeleteBladesButton.IsEnabled = DeleteBrandsButton.IsEnabled = SaveBladesButton.IsEnabled = workspace.BladesReady;
     }
     private void SetBusy(bool value, string? message = null)
     {

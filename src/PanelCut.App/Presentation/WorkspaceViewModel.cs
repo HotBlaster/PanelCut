@@ -11,14 +11,23 @@ public sealed class WorkspaceViewModel
     private readonly InventoryStore inventoryStore;
     private readonly ProjectStore projectStore = new();
     private readonly MaterialStore materialStore;
-    public WorkspaceViewModel(string? inventoryPath = null, string? materialsPath = null)
+    private readonly BladeStore bladeStore;
+    public WorkspaceViewModel(string? inventoryPath = null, string? materialsPath = null, string? bladesPath = null)
     {
         inventoryStore = new InventoryStore(inventoryPath);
         materialStore = new MaterialStore(materialsPath ?? (inventoryPath is null ? null
             : Path.Combine(Path.GetDirectoryName(inventoryStore.FilePath)!, "materials.json")));
-        if (string.Equals(InventoryPath, MaterialsPath, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Inventory and materials must use different files.");
+        bladeStore = new BladeStore(bladesPath ?? (inventoryPath is null ? null
+            : Path.Combine(Path.GetDirectoryName(inventoryStore.FilePath)!, "blades.json")));
+        if (new[] { InventoryPath, MaterialsPath, BladesPath }.Distinct(StringComparer.OrdinalIgnoreCase).Count() < 3)
+            throw new ArgumentException("Inventory, materials and blades must use different files.");
     }
+    public BladeCatalogue Blades { get; private set; } = new();
+    public ObservableCollection<BladeRow> BladeRows { get; } = [];
+    public ObservableCollection<BrandRow> BrandRows { get; } = [];
+    public ObservableCollection<string> BrandNames { get; } = [];
+    public string BladesPath => bladeStore.FilePath;
+    public bool BladesReady { get; private set; }
     public MaterialCatalogue Catalogue { get; private set; } = new();
     public ObservableCollection<MaterialRow> Materials { get; } = [];
     public ObservableCollection<MaterialOption> MaterialOptions { get; } = [];
@@ -94,6 +103,92 @@ public sealed class WorkspaceViewModel
 
     public PartRow CreatePartRow(Part? part = null) => new(Project.Unit, part, () => Catalogue);
     public StockRow CreateStockRow(bool scrap, IStockItem? stock = null) => new(scrap, stock, () => Catalogue);
+    public BladeRow CreateBladeRow(Blade? blade = null) => new(() => Blades, blade);
+
+    public async Task LoadBladesAsync()
+    {
+        BladesReady = false;
+        Blades = await bladeStore.LoadAsync();
+        BladesReady = true;
+        RestoreBladeRows();
+    }
+
+    public BladeCatalogue BladeCandidate()
+    {
+        var candidate = new BladeCatalogue();
+        candidate.Brands.AddRange(BrandRows.Select(row => row.ToModel()));
+        foreach (var row in BladeRows)
+        {
+            var brandId = row.BrandId;
+            if (row.NewBrand.Length > 0)
+            {
+                var brand = candidate.Brands.FirstOrDefault(existing =>
+                    string.Equals(existing.Name, row.NewBrand, StringComparison.OrdinalIgnoreCase));
+                if (brand is null)
+                    candidate.Brands.Add(brand = new Brand(row.NewBrand));
+                brandId = brand.Id;
+            }
+            else if (brandId is { } id && !candidate.Brands.Any(brand => brand.Id == id))
+                throw new ArgumentException($"The brand of blade \"{row.Name}\" no longer exists. Choose another brand.");
+            candidate.Blades.Add(row.ToModel(brandId));
+        }
+        candidate.Validate();
+        return candidate;
+    }
+
+    public BladeCatalogue BrandDeletionCandidate(IReadOnlyCollection<Guid> brandIds)
+    {
+        var candidate = BladeCandidate();
+        foreach (var brand in candidate.Brands.Where(brand => brandIds.Contains(brand.Id)))
+        {
+            var users = candidate.Blades.Count(blade => blade.BrandId == brand.Id);
+            if (users > 0)
+                throw new InvalidOperationException($"Brand \"{brand.Name}\" is used by {users} blade(s). Change those blades first.");
+        }
+        candidate.Brands.RemoveAll(brand => brandIds.Contains(brand.Id));
+        return candidate;
+    }
+
+    public async Task CommitManualBladeEditAsync(BladeCatalogue candidate)
+    {
+        if (!BladesReady)
+            throw new InvalidOperationException("Blades are unavailable. Reload blades before editing.");
+        if (!Same(Blades, candidate))
+            await bladeStore.SaveAsync(candidate);
+        Blades = candidate;
+        RestoreBladeRows();
+    }
+
+    public void RestoreBladeRows()
+    {
+        BrandRows.Clear();
+        foreach (var brand in Blades.Brands)
+            BrandRows.Add(new BrandRow(brand));
+        BladeRows.Clear();
+        foreach (var blade in Blades.Blades)
+            BladeRows.Add(CreateBladeRow(blade));
+        BrandNames.Clear();
+        foreach (var name in Blades.Brands.Select(brand => brand.Name).Order(StringComparer.CurrentCultureIgnoreCase))
+            BrandNames.Add(name);
+    }
+
+    public IReadOnlyList<BladeOption> ProjectBladeOptions()
+    {
+        var options = Blades.Blades.Select(blade => new BladeOption(blade.Id, BladeDisplay(blade)))
+            .OrderBy(option => option.Display, StringComparer.CurrentCultureIgnoreCase).ToList();
+        if (Project.BladeId is { } id && options.All(option => option.Id != id))
+            options.Insert(0, new BladeOption(id, "Missing blade - select another"));
+        return options;
+    }
+
+    public Blade? ProjectBlade => Project.BladeId is { } id ? Blades.Blades.FirstOrDefault(blade => blade.Id == id) : null;
+
+    private string BladeDisplay(Blade blade)
+    {
+        var brand = Blades.ResolveBrand(blade.BrandId)?.Name;
+        return string.Join(" - ", new[] { blade.Name, brand, $"\u00D8{EditableRow.Format(blade.Diameter)} Z{blade.Teeth}",
+            $"kerf {EditableRow.Format(blade.Kerf)} mm" }.Where(part => !string.IsNullOrEmpty(part)));
+    }
 
     public async Task LoadInventoryAsync()
     {
@@ -134,9 +229,9 @@ public sealed class WorkspaceViewModel
             Scraps.Add(CreateStockRow(true, scrap));
     }
 
-    public bool CommitProject(double kerfMillimetres, LengthUnit unit)
+    public bool CommitProject(Guid? bladeId, LengthUnit unit)
     {
-        var candidate = new Project { KerfWidth = kerfMillimetres, Unit = unit };
+        var candidate = new Project { BladeId = bladeId, Unit = unit };
         candidate.Parts.AddRange(Parts.Select(row => row.ToModel()));
         candidate.Validate();
         if (Same(Project, candidate))
@@ -165,19 +260,18 @@ public sealed class WorkspaceViewModel
     public async Task OpenProjectAsync(string path) => AdoptProject(await projectStore.LoadAsync(path), path);
     public async Task SaveProjectAsync(string path)
     {
-        if (string.Equals(Path.GetFullPath(path), InventoryPath, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(Path.GetFullPath(path), MaterialsPath, StringComparison.OrdinalIgnoreCase))
+        if (new[] { InventoryPath, MaterialsPath, BladesPath }.Contains(Path.GetFullPath(path), StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException("A project cannot overwrite a repository file. Choose a different path.");
         await projectStore.SaveAsync(path, Project);
         ProjectPath = path;
         IsDirty = false;
     }
 
-    public bool HasProjectDrafts(double kerf, LengthUnit unit)
+    public bool HasProjectDrafts(Guid? bladeId, LengthUnit unit)
     {
         try
         {
-            var candidate = new Project { KerfWidth = kerf, Unit = unit };
+            var candidate = new Project { BladeId = bladeId, Unit = unit };
             candidate.Parts.AddRange(Parts.Select(row => row.ToModel()));
             return !Same(Project, candidate);
         }

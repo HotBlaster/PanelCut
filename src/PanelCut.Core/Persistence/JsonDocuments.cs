@@ -108,7 +108,7 @@ internal sealed class ProjectDocument
 {
     [JsonRequired] public int SchemaVersion { get; set; }
     [JsonRequired] public List<PartDocument> Parts { get; set; } = null!;
-    public double KerfWidth { get; set; }
+    public Guid? BladeId { get; set; }
     public LengthUnit Unit { get; set; } = LengthUnit.Millimetres;
 
     public ProjectDocument() { }
@@ -116,18 +116,18 @@ internal sealed class ProjectDocument
     internal ProjectDocument(Project project)
     {
         project.Validate();
-        SchemaVersion = 2;
+        SchemaVersion = 3;
         Parts = project.Parts.Select(part => new PartDocument(part)).ToList();
-        KerfWidth = project.KerfWidth;
+        BladeId = project.BladeId;
         Unit = project.Unit;
     }
 
     internal Project ToModel()
     {
-        if (SchemaVersion != 2)
+        if (SchemaVersion != 3)
             throw new InvalidDataException($"Unsupported project schema version: {SchemaVersion}.");
         ArgumentNullException.ThrowIfNull(Parts);
-        var project = new Project { KerfWidth = KerfWidth, Unit = Unit };
+        var project = new Project { BladeId = BladeId, Unit = Unit };
         foreach (var document in Parts)
         {
             ArgumentNullException.ThrowIfNull(document);

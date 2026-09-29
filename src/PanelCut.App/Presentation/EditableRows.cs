@@ -99,6 +99,64 @@ public sealed class MaterialRow : EditableRow
 }
 
 public sealed record MaterialOption(Guid Id, string Display);
+public sealed record BladeOption(Guid Id, string Display);
+
+public sealed class BrandRow : EditableRow
+{
+    public BrandRow(Brand? brand = null)
+    {
+        if (brand is null)
+            return;
+        Id = brand.Id;
+        Name = brand.Name;
+    }
+
+    public string Name { get; set; } = "";
+    public Brand ToModel() => new(Name) { Id = Id };
+}
+
+public sealed class BladeRow : EditableRow
+{
+    private readonly Func<BladeCatalogue> catalogue;
+
+    public BladeRow(Func<BladeCatalogue> catalogue, Blade? blade = null)
+    {
+        this.catalogue = catalogue;
+        if (blade is null)
+            return;
+        Id = blade.Id;
+        Name = blade.Name;
+        Diameter = Format(blade.Diameter);
+        Teeth = blade.Teeth.ToString(CultureInfo.CurrentCulture);
+        Kerf = Format(blade.Kerf);
+        BrandId = blade.BrandId;
+        BrandCode = blade.BrandCode;
+    }
+
+    public string Name { get; set; } = "";
+    public string Brand
+    {
+        get => NewBrand.Length > 0 ? NewBrand : catalogue().ResolveBrand(BrandId)?.Name ?? "";
+        set
+        {
+            var name = (value ?? "").Trim();
+            var existing = catalogue().Brands.FirstOrDefault(brand => string.Equals(brand.Name, name, StringComparison.OrdinalIgnoreCase));
+            BrandId = existing?.Id;
+            NewBrand = existing is null ? name : "";
+            Refresh();
+        }
+    }
+    public string BrandCode { get; set; } = "";
+    public string Diameter { get; set; } = "";
+    public string Teeth { get; set; } = "";
+    public string Kerf { get; set; } = "";
+    public Guid? BrandId { get; set; }
+    // A typed brand name not yet in the catalogue; it is created when the blades are saved.
+    public string NewBrand { get; set; } = "";
+
+    public Blade ToModel(Guid? brandId) =>
+        new(Name, Number(Diameter, "Diameter"), Integer(Teeth, "Teeth"), Number(Kerf, "Kerf"), brandId, BrandCode) { Id = Id };
+}
 
 public abstract class MaterialBoundRow(Func<MaterialCatalogue>? catalogue) : EditableRow
 {

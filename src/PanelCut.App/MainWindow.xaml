@@ -111,6 +111,7 @@
             <MenuItem x:Name="ConfigurationMenu" Header="_Configuration">
                 <MenuItem x:Name="OpenInventoryFolderMenuItem" Header="Open _Inventory Folder" Click="OpenInventoryFolderClick"/>
                 <MenuItem x:Name="OpenMaterialsFolderMenuItem" Header="Open _Materials Folder" Click="OpenMaterialsFolderClick"/>
+                <MenuItem x:Name="OpenBladesFolderMenuItem" Header="Open _Blades Folder" Click="OpenBladesFolderClick"/>
             </MenuItem>
         </Menu>
         <Border DockPanel.Dock="Top" Background="White" BorderBrush="#CDD5D3" BorderThickness="0,0,0,1" Padding="20,14">
@@ -132,9 +133,12 @@
                 <Grid Margin="14">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <WrapPanel Margin="0,0,0,18">
-                        <TextBlock Text="Kerf" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <TextBox x:Name="KerfInput" Width="90" Padding="6" Text="0" LostKeyboardFocus="SettingsChanged" AutomationProperties.AutomationId="Kerf"/>
-                        <TextBlock x:Name="KerfUnit" Text="mm" VerticalAlignment="Center" Margin="6,0,24,0"/>
+                        <TextBlock Text="Blade" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox x:Name="BladeInput" Width="380" Padding="6,4" DisplayMemberPath="Display" SelectedValuePath="Id"
+                                  SelectionChanged="BladeChanged" AutomationProperties.AutomationId="Blade"
+                                  ToolTip="Saw blade used for this project; its kerf is used by the optimizer"/>
+                        <TextBlock x:Name="KerfDisplay" Text="Kerf: select a blade" VerticalAlignment="Center" Foreground="#5C6A68" Margin="10,0,24,0"
+                                   AutomationProperties.AutomationId="Kerf"/>
                         <TextBlock Text="Units" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <ComboBox x:Name="UnitInput" Width="100" Padding="4" SelectionChanged="UnitChanged" AutomationProperties.AutomationId="Units"/>
                     </WrapPanel>
@@ -260,6 +264,61 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellEditingTemplate>
                             </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </TabItem>
+            <TabItem x:Name="BladesTab" Header="Blades">
+                <DockPanel Margin="14">
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                        <TextBlock Text="Blades - mm" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBox x:Name="BladesLocation" Foreground="#5C6A68" Margin="0,4,0,10"
+                                 IsReadOnly="True" BorderThickness="0" Background="Transparent" Padding="0"
+                                 AutomationProperties.Name="Blades file path"/>
+                        <WrapPanel>
+                            <Button x:Name="AddBladeButton" Content="+ Blade" Click="AddBladeClick" AutomationProperties.AutomationId="AddBlade"/>
+                            <Button x:Name="DeleteBladesButton" Content="Delete" Click="DeleteBladesClick" ToolTip="Delete selected blades"/>
+                            <Button x:Name="SaveBladesButton" Content="Save" Click="RetryBladeClick"/>
+                            <Button Content="Cancel edit" Click="CancelBladeClick" Focusable="False"/>
+                            <Button Content="Reload blades" Click="ReloadBladesClick"/>
+                        </WrapPanel>
+                    </StackPanel>
+                    <DockPanel DockPanel.Dock="Right" Width="250" Margin="14,0,0,0">
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <TextBlock Text="Brands" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button x:Name="AddBrandButton" Content="+ Brand" Click="AddBrandClick" AutomationProperties.AutomationId="AddBrand"/>
+                                <Button x:Name="DeleteBrandsButton" Content="Delete" Click="DeleteBrandsClick" Margin="0" ToolTip="Delete selected unused brands"/>
+                            </StackPanel>
+                        </DockPanel>
+                        <DataGrid x:Name="BrandsGrid" SelectionMode="Extended" SelectionUnit="FullRow" BeginningEdit="BladeBeginningEdit"
+                                  RowEditEnding="BladeRowEnding" AutomationProperties.AutomationId="BrandsGrid"/>
+                    </DockPanel>
+                    <DataGrid x:Name="BladesGrid" SelectionMode="Extended" SelectionUnit="FullRow" BeginningEdit="BladeBeginningEdit"
+                              RowEditEnding="BladeRowEnding" AutomationProperties.AutomationId="BladesGrid">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Width="200" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                                ElementStyle="{StaticResource CellTextStyle}" EditingElementStyle="{StaticResource CellTextEditorStyle}"/>
+                            <DataGridTemplateColumn Header="Brand" Width="170" SortMemberPath="Brand">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding Brand}" Style="{StaticResource CellTextStyle}"/></DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <controls:BrandPicker Text="{Binding Brand, UpdateSourceTrigger=LostFocus}"
+                                                              Brands="{Binding DataContext.BrandNames, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                              AutomationProperties.Name="Blade brand"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Brand code" Width="140" Binding="{Binding BrandCode, UpdateSourceTrigger=PropertyChanged}"
+                                                ElementStyle="{StaticResource CellTextStyle}" EditingElementStyle="{StaticResource CellTextEditorStyle}"/>
+                            <DataGridTextColumn Header="Diameter mm" Width="115" Binding="{Binding Diameter, UpdateSourceTrigger=PropertyChanged}"
+                                                ElementStyle="{StaticResource CellNumberStyle}" EditingElementStyle="{StaticResource CellNumberEditorStyle}"/>
+                            <DataGridTextColumn Header="Teeth" Width="75" Binding="{Binding Teeth, UpdateSourceTrigger=PropertyChanged}"
+                                                ElementStyle="{StaticResource CellNumberStyle}" EditingElementStyle="{StaticResource CellNumberEditorStyle}"/>
+                            <DataGridTextColumn Header="Kerf mm" Width="90" Binding="{Binding Kerf, UpdateSourceTrigger=PropertyChanged}"
+                                                ElementStyle="{StaticResource CellNumberStyle}" EditingElementStyle="{StaticResource CellNumberEditorStyle}"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </DockPanel>
