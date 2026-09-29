@@ -36,6 +36,22 @@ internal static class Validation
         return value;
     }
 
+    internal static string Color(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (value.Length != 7 || value[0] != '#' || !value.Skip(1).All(char.IsAsciiHexDigit))
+            throw new ArgumentException("Colour must be in #RRGGBB format.", nameof(value));
+        return value.ToUpperInvariant();
+    }
+
+    internal static void UniqueNames(IEnumerable<string> names, string kind)
+    {
+        var duplicate = names.GroupBy(name => name.Trim(), StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null)
+            throw new ArgumentException($"{kind} \"{duplicate.Key}\" is defined more than once.");
+    }
+
     internal static T Defined<T>(T value) where T : struct, Enum
     {
         if (!Enum.IsDefined(value))

@@ -85,12 +85,10 @@ public partial class MainWindow : Window
         AddText(PartsGrid, "Qty", "Quantity", 60, numeric: true);
         AddMaterialColumn(PartsGrid);
         AddText(PartsGrid, "Thickness (mm)", "Thickness", 120, true, numeric: true);
-        AddText(PartsGrid, "Material status", "MaterialStatus", 120, true);
-        AddCheck(PartsGrid, "Top", "EdgeBandTop");
-        AddCheck(PartsGrid, "Bottom", "EdgeBandBottom");
-        AddCheck(PartsGrid, "Left", "EdgeBandLeft");
-        AddCheck(PartsGrid, "Right", "EdgeBandRight");
-        AddText(PartsGrid, "Group / room", "GroupTag", 150);
+        PartsGrid.Columns.Add(new DataGridTemplateColumn
+        {
+            Header = "Colour", Width = 80, IsReadOnly = true, CellTemplate = (DataTemplate)FindResource("PartColorCellTemplate")
+        });
         foreach (var grid in new[] { PanelsGrid, ScrapsGrid })
         {
             AddText(grid, "Label", "Label", 150);
@@ -118,7 +116,7 @@ public partial class MainWindow : Window
 
     private void AddMaterialColumn(DataGrid grid) => grid.Columns.Add(new DataGridComboBoxColumn
     {
-        Header = "Material", Width = 270, ItemsSource = workspace.MaterialOptions,
+        Header = "Material", Width = 180, ItemsSource = workspace.MaterialOptions,
         DisplayMemberPath = "Display", SelectedValuePath = "Id",
         ElementStyle = (Style)FindResource("CellMaterialStyle"),
         EditingElementStyle = (Style)FindResource("CellMaterialEditorStyle"),
@@ -134,13 +132,25 @@ public partial class MainWindow : Window
             Binding = new Binding(path) { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged, Mode = readOnly ? BindingMode.OneWay : BindingMode.TwoWay }
         });
 
-    private void AddCheck(DataGrid grid, string header, string path) => grid.Columns.Add(new DataGridCheckBoxColumn
+    private void PartColorClick(object sender, RoutedEventArgs args)
     {
-        Header = header, Width = header.Length > 6 ? 100 : 65,
-        ElementStyle = (Style)FindResource("CellCheckStyle"),
-        EditingElementStyle = (Style)FindResource("CellCheckEditorStyle"),
-        Binding = new Binding(path) { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged }
-    });
+        if (((FrameworkElement)sender).DataContext is not PartRow row || !CommitProject())
+            return;
+        using var dialog = new System.Windows.Forms.ColorDialog
+        {
+            FullOpen = true, AnyColor = true, Color = System.Drawing.ColorTranslator.FromHtml(row.Color)
+        };
+        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+            return;
+        var previous = row.Color;
+        row.Color = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
+        row.Refresh();
+        if (!CommitProject())
+        {
+            row.Color = previous;
+            row.Refresh();
+        }
+    }
 
     private async void WindowLoaded(object sender, RoutedEventArgs args)
     {

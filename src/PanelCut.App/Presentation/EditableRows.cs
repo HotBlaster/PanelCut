@@ -175,7 +175,6 @@ public abstract class MaterialBoundRow(Func<MaterialCatalogue>? catalogue) : Edi
             Refresh();
         }
     }
-    public string MaterialStatus => SelectedMaterial is null ? "Select material" : "";
     public string MaterialType => SelectedMaterial?.Type ?? "";
     protected virtual void MaterialSelected() { }
     public void ValidateMaterial()
@@ -206,11 +205,7 @@ public sealed class PartRow : MaterialBoundRow
         Label = part.Label;
         selectedMaterialId = part.MaterialId;
         Quantity = part.Quantity.ToString(CultureInfo.CurrentCulture);
-        EdgeBandTop = part.EdgeBandTop;
-        EdgeBandBottom = part.EdgeBandBottom;
-        EdgeBandLeft = part.EdgeBandLeft;
-        EdgeBandRight = part.EdgeBandRight;
-        GroupTag = part.GroupTag;
+        Color = part.Color;
     }
 
     public string Label { get; set; } = "";
@@ -219,19 +214,14 @@ public sealed class PartRow : MaterialBoundRow
     public string Quantity { get; set; } = "1";
     public string Thickness => SelectedMaterial is { } material
         ? Format(UnitConversion.FromMillimetres(material.Thickness, unit)) : "";
-    public bool EdgeBandTop { get; set; }
-    public bool EdgeBandBottom { get; set; }
-    public bool EdgeBandLeft { get; set; }
-    public bool EdgeBandRight { get; set; }
-    public string GroupTag { get; set; } = "";
+    public string Color { get; set; } = Part.DefaultColor;
 
     public Part ToModel() => new(
         Width == initialWidth && originalWidth.HasValue ? originalWidth.Value : UnitConversion.ToMillimetres(Number(Width, "Width"), unit),
         Height == initialHeight && originalHeight.HasValue ? originalHeight.Value : UnitConversion.ToMillimetres(Number(Height, "Height"), unit),
         MaterialId, Integer(Quantity, "Quantity"))
     {
-        Id = Id, Label = Label, EdgeBandTop = EdgeBandTop,
-        EdgeBandBottom = EdgeBandBottom, EdgeBandLeft = EdgeBandLeft, EdgeBandRight = EdgeBandRight, GroupTag = GroupTag
+        Id = Id, Label = Label, Color = Color
     };
 }
 

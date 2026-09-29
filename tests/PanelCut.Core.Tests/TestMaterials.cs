@@ -13,11 +13,15 @@ internal static class TestMaterials
     internal static MaterialCatalogue Catalogue()
     {
         var catalogue = new MaterialCatalogue();
-        foreach (var name in new[] { "Oak", "oak", "Birch" })
+        foreach (var name in new[] { "Oak", "Pine", "Birch" })
         foreach (var thickness in new[] { 1d, 12d, 18d })
-            catalogue.Materials.Add(new Material(name, "Plywood", thickness) { Id = Id(name, thickness) });
+            catalogue.Materials.Add(new Material(Name(name, thickness), "Plywood", thickness) { Id = Id(name, thickness) });
         return catalogue;
     }
+
+    // Names must be unique, so only the 18 mm variant keeps the bare name.
+    internal static string Name(string name, double thickness = 18) =>
+        thickness == 18 ? name : FormattableString.Invariant($"{name} {thickness}");
 
     private static readonly double[] Kerfs = [0, 0.1, 0.5, 1, 2, 3.2, 8, 1000];
 

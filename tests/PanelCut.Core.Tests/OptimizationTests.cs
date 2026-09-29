@@ -12,20 +12,13 @@ public class OptimizationTests
         var catalogue = TestMaterials.Catalogue();
         var blades = TestMaterials.Blades();
         var selected = catalogue.Resolve(TestMaterials.Id("Oak"));
-        var equivalent = new Material("Oak", "Plywood", 18);
-        catalogue.Materials.Add(equivalent);
         var inventory = Stock(new Panel(100, 100, selected.Id) { Label = "Stored label" });
-        var project = Job(new Part(100, 100, equivalent.Id));
+        var project = Job(new Part(100, 100, selected.Id));
         var optimizer = new PanelOptimizer();
         var original = optimizer.OptimizePanels(inventory, project, catalogue, blades);
         Assert.True(original.IsComplete);
         catalogue.Materials.Remove(selected);
-        catalogue.Materials.Add(new Material("Oak", "Plywood", 12) { Id = selected.Id });
-        Assert.False(optimizer.OptimizePanels(inventory, project, catalogue, blades).IsComplete);
-        catalogue.Materials.RemoveAll(material => material.Id == selected.Id);
         catalogue.Materials.Add(new Material("Oak", "Solid", 18) { Id = selected.Id });
-        Assert.False(optimizer.OptimizePanels(inventory, project, catalogue, blades).IsComplete);
-        project.Parts[0].MaterialId = selected.Id;
         var updated = optimizer.OptimizePanels(inventory, project, catalogue, blades);
         Assert.True(updated.IsComplete);
         Assert.Equal("Solid", updated.Sheets[0].Stock.MaterialType);
@@ -235,7 +228,7 @@ public class OptimizationTests
     public void MaterialMatchingIsExactAndDepletedStockIsIgnored()
     {
         var inventory = Stock(new Panel(100, 100, TestMaterials.Id("Oak", 18), 0) { Priority = -3 },
-            new Panel(100, 100, TestMaterials.Id("oak", 18)) { Priority = -2 },
+            new Panel(100, 100, TestMaterials.Id("Pine", 18)) { Priority = -2 },
             new Scrap(100, 100, TestMaterials.Id("Birch", 18)) { Priority = -1 },
             new Panel(100, 100, TestMaterials.Id("Oak", 12)));
         var project = Job(new Part(100, 100, TestMaterials.Id("Oak"), 2));
@@ -291,8 +284,7 @@ public class OptimizationTests
         };
         var part = new Part(40, 80, TestMaterials.Id("Oak"), 3)
         {
-            Label = "Shelf", GroupTag = "Kitchen",
-            EdgeBandTop = true, EdgeBandLeft = true, EdgeBandRight = true
+            Label = "Shelf", Color = "#123456"
         };
         var inventory = Stock(stock);
         var project = Job(part);
@@ -307,10 +299,7 @@ public class OptimizationTests
         Assert.True(placed.IsRotated);
         Assert.Equal(40, placed.Part.Width);
         Assert.Equal(80, placed.Part.Height);
-        Assert.True(placed.Part.EdgeBandTop);
-        Assert.False(placed.Part.EdgeBandBottom);
-        Assert.True(placed.Part.EdgeBandLeft);
-        Assert.True(placed.Part.EdgeBandRight);
+        Assert.Equal("#123456", placed.Part.Color);
         Assert.Equal(stock.OriginPanelId, result.Sheets[0].Stock.OriginPanelId);
         stock.Quantity = 0;
         stock.MaterialId = TestMaterials.Id("Birch");

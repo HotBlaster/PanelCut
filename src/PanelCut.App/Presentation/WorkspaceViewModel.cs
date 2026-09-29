@@ -86,8 +86,7 @@ public sealed class WorkspaceViewModel
         foreach (var type in Catalogue.Materials.Select(material => material.Type).Distinct(StringComparer.Ordinal)
             .Order(StringComparer.CurrentCulture))
             MaterialTypes.Add(type);
-        var options = Catalogue.Materials.Select(material => new MaterialOption(material.Id,
-            $"{material.Name} / {material.Type} / {EditableRow.Format(material.Thickness)} mm")).ToArray();
+        var options = Catalogue.Materials.Select(material => new MaterialOption(material.Id, material.Name)).ToArray();
         for (var index = 0; index < options.Length; index++)
         {
             if (index < MaterialOptions.Count)

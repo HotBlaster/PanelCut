@@ -12,7 +12,6 @@ public sealed class SheetDrawing : FrameworkElement
     private readonly SheetLayout sheet;
     private readonly LengthUnit unit;
     private readonly List<(Rect Bounds, string Text)> hitAreas = [];
-    private readonly string[] palette = ["#BBDDD1", "#F3D893", "#B9D4EB", "#EDBAB5", "#CECF9A", "#CBBFE2"];
 
     public SheetDrawing(SheetLayout sheet, LengthUnit unit)
     {
@@ -52,12 +51,10 @@ public sealed class SheetDrawing : FrameworkElement
         foreach (var placement in sheet.Placements)
         {
             var bounds = Map(placement.Bounds, scale, left, top);
-            context.DrawRectangle(GroupBrush(placement.Part.GroupTag), outline, bounds);
+            context.DrawRectangle(Brush(placement.Part.Color), outline, bounds);
             var label = string.IsNullOrWhiteSpace(placement.Part.Label) ? "Part" : placement.Part.Label;
             var dimensions = $"{Length(placement.Bounds.Width)} x {Length(placement.Bounds.Height)} {UnitName}";
             var details = $"{label} #{placement.CopyIndex}\n{dimensions}\n{placement.Part.Material} / {placement.Part.MaterialType} / {Length(placement.Part.Thickness)} {UnitName}";
-            if (placement.Part.GroupTag.Length > 0)
-                details += $"\n{placement.Part.GroupTag}";
             if (placement.IsRotated)
                 details += "\nRotated 90 degrees";
             hitAreas.Add((bounds, details));
@@ -93,16 +90,6 @@ public sealed class SheetDrawing : FrameworkElement
         context.PushClip(new RectangleGeometry(bounds));
         context.DrawText(formatted, new Point(bounds.X, centered ? bounds.Y + Math.Max(0, (bounds.Height - formatted.Height) / 2) : bounds.Y));
         context.Pop();
-    }
-
-    private Brush GroupBrush(string group)
-    {
-        if (group.Length == 0)
-            return Brush("#D5DDDB");
-        uint hash = 2166136261;
-        foreach (var character in group)
-            hash = unchecked((hash ^ character) * 16777619);
-        return Brush(palette[hash % (uint)palette.Length]);
     }
 
     private static Brush Hatch(string background, string line)

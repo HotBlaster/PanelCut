@@ -15,6 +15,10 @@ public class ModelTests
         Assert.Throws<ArgumentException>(() => catalogue.Resolve(Guid.NewGuid()));
         catalogue.Materials.Add(material);
         Assert.Throws<ArgumentException>(catalogue.Validate);
+        catalogue.Materials.RemoveAt(1);
+        catalogue.Materials.Add(new Material(" oak ", "Solid", 12));
+        Assert.Contains("more than once", Assert.Throws<ArgumentException>(catalogue.Validate).Message);
+        catalogue.Materials.RemoveAt(1);
         Assert.Throws<ArgumentException>(() => new Material(" ", "Plywood", 18));
         Assert.Throws<ArgumentException>(() => new Material("Oak", " ", 18));
         Assert.Throws<ArgumentOutOfRangeException>(() => new Material("Oak", "Plywood", 0));
@@ -73,6 +77,9 @@ public class ModelTests
         catalogue.Blades.Add(null!);
         Assert.Throws<ArgumentException>(catalogue.Validate);
         catalogue.Blades.RemoveAt(1);
+        catalogue.Blades.Add(new Blade("FINE ", 300, 24, 3));
+        Assert.Contains("Blade \"Fine\"", Assert.Throws<ArgumentException>(catalogue.Validate).Message);
+        catalogue.Blades.RemoveAt(1);
         catalogue.Blades.Clear();
         Assert.False(catalogue.IsBrandInUse(freud.Id));
         catalogue.Validate();
@@ -95,7 +102,7 @@ public class ModelTests
         Assert.NotEqual(Guid.Empty, panel.Id);
         Assert.NotEqual(panel.Id, scrap.Id);
         Assert.NotEqual(Guid.Empty, part.Id);
-        Assert.False(part.EdgeBandTop || part.EdgeBandBottom || part.EdgeBandLeft || part.EdgeBandRight);
+        Assert.Equal(Part.DefaultColor, part.Color);
         project.Parts.Add(part);
         Assert.Empty(new Project().Parts);
         var inventory = new Inventory();
@@ -166,6 +173,12 @@ public class ModelTests
         Assert.Equal(TestMaterials.Id("Oak"), panel.MaterialId);
         Assert.Equal(string.Empty, panel.Label);
         Assert.Throws<ArgumentNullException>(() => panel.Label = null!);
+        var part = new Part(100, 80, TestMaterials.Id("Oak")) { Color = "#a1b2c3" };
+        Assert.Equal("#A1B2C3", part.Color);
+        foreach (var invalid in new[] { "", "A1B2C3", "#A1B2C", "#A1B2C3D", "#GGGGGG", "red" })
+            Assert.Throws<ArgumentException>(() => part.Color = invalid);
+        Assert.Throws<ArgumentNullException>(() => part.Color = null!);
+        Assert.Equal("#A1B2C3", part.Color);
     }
 
     [Fact]

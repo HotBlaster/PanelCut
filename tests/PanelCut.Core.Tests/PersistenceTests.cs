@@ -225,7 +225,7 @@ public sealed class PersistenceTests : IDisposable
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(ProjectPath));
         Assert.Equal(new[] { "bladeId", "parts", "schemaVersion", "unit" },
             json.RootElement.EnumerateObject().Select(property => property.Name).Order());
-        Assert.Equal(new[] { "edgeBandBottom", "edgeBandLeft", "edgeBandRight", "edgeBandTop", "groupTag", "height", "id", "label", "materialId", "quantity", "width" },
+        Assert.Equal(new[] { "color", "height", "id", "label", "materialId", "quantity", "width" },
             json.RootElement.GetProperty("parts")[0].EnumerateObject().Select(property => property.Name).Order());
         Assert.Equal("inches", json.RootElement.GetProperty("unit").GetString());
         Assert.Equal(254, json.RootElement.GetProperty("parts")[0].GetProperty("width").GetDouble());
@@ -457,7 +457,8 @@ public sealed class PersistenceTests : IDisposable
     [InlineData("quantity", "1.5")]
     [InlineData("materialId", "null")]
     [InlineData("label", "null")]
-    [InlineData("groupTag", "null")]
+    [InlineData("color", "null")]
+    [InlineData("color", "\"red\"")]
     [InlineData("unknownField", "true")]
     [InlineData("id", "\"00000000-0000-0000-0000-000000000000\"")]
     public async Task InvalidPartFieldsCannotBypassModelValidation(string fieldName, string value)
@@ -477,19 +478,59 @@ public sealed class PersistenceTests : IDisposable
         await new ProjectStore().SaveAsync(ProjectPath, CreateProject());
         var project = JsonNode.Parse(await File.ReadAllTextAsync(ProjectPath))!;
         var part = project["parts"]![0]!.AsObject();
-        foreach (var name in new[] { "quantity", "label", "edgeBandTop", "edgeBandBottom", "edgeBandLeft", "edgeBandRight", "groupTag" })
+        foreach (var name in new[] { "quantity", "label", "color" })
             part.Remove(name);
         await File.WriteAllTextAsync(ProjectPath, project.ToJsonString());
         var loadedPart = (await new ProjectStore().LoadAsync(ProjectPath)).Parts[0];
         Assert.Equal(1, loadedPart.Quantity);
         Assert.Equal(string.Empty, loadedPart.Label);
-        Assert.Equal(string.Empty, loadedPart.GroupTag);
-        Assert.False(loadedPart.EdgeBandTop || loadedPart.EdgeBandBottom || loadedPart.EdgeBandLeft || loadedPart.EdgeBandRight);
+        Assert.Equal(Part.DefaultColor, loadedPart.Color);
         await new InventoryStore(InventoryPath).SaveAsync(CreateInventory());
         var inventory = JsonNode.Parse(await File.ReadAllTextAsync(InventoryPath))!;
         inventory["scraps"]![0]!.AsObject().Remove("originPanelId");
         await File.WriteAllTextAsync(InventoryPath, inventory.ToJsonString());
         Assert.Null((await new InventoryStore(InventoryPath).LoadAsync()).Scraps[0].OriginPanelId);
+    }
+
+    [Fact]
+    public async Task LegacyEdgeBandAndGroupFieldsAreAcceptedAndDroppedOnSave()
+    {
+        var store = new ProjectStore();
+        await store.SaveAsync(ProjectPath, CreateProject());
+        var document = JsonNode.Parse(await File.ReadAllTextAsync(ProjectPath))!;
+        var part = document["parts"]![0]!.AsObject();
+        part.Remove("color");
+        part["edgeBandTop"] = true;
+        part["edgeBandBottom"] = false;
+        part["edgeBandLeft"] = true;
+        part["edgeBandRight"] = false;
+        part["groupTag"] = "Kitchen";
+        await File.WriteAllTextAsync(ProjectPath, document.ToJsonString());
+        var loaded = await store.LoadAsync(ProjectPath);
+        Assert.Equal(Part.DefaultColor, loaded.Parts[0].Color);
+        await store.SaveAsync(ProjectPath, loaded);
+        using var json = JsonDocument.Parse(await File.ReadAllTextAsync(ProjectPath));
+        Assert.Equal(new[] { "color", "height", "id", "label", "materialId", "quantity", "width" },
+            json.RootElement.GetProperty("parts")[0].EnumerateObject().Select(property => property.Name).Order());
+    }
+
+    [Fact]
+    public async Task DuplicateMaterialAndBladeNamesAreRejectedOnLoad()
+    {
+        var materialsPath = Path.Combine(directory, "materials.json");
+        await new MaterialStore(materialsPath).SaveAsync(TestMaterials.Catalogue());
+        var materials = JsonNode.Parse(await File.ReadAllTextAsync(materialsPath))!;
+        materials["materials"]![1]!["name"] = " OAK ";
+        await File.WriteAllTextAsync(materialsPath, materials.ToJsonString());
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => new MaterialStore(materialsPath).LoadAsync());
+        Assert.Contains("more than once", error.Message);
+        var bladesPath = Path.Combine(directory, "blades.json");
+        await new BladeStore(bladesPath).SaveAsync(CreateBlades());
+        var blades = JsonNode.Parse(await File.ReadAllTextAsync(bladesPath))!;
+        blades["blades"]![1]!["name"] = "fine CROSSCUT";
+        await File.WriteAllTextAsync(bladesPath, blades.ToJsonString());
+        error = await Assert.ThrowsAsync<InvalidDataException>(() => new BladeStore(bladesPath).LoadAsync());
+        Assert.Contains("more than once", error.Message);
     }
 
     private static Inventory CreateInventory()
@@ -525,12 +566,11 @@ public sealed class PersistenceTests : IDisposable
         var project = new Project { Unit = LengthUnit.Inches, BladeId = TestMaterials.BladeId(3.2) };
         project.Parts.Add(new Part(254, 127, TestMaterials.Id("Oak"), 3)
         {
-            Label = "Shelf, left", GroupTag = "Kitchen",
-            EdgeBandTop = true, EdgeBandBottom = false, EdgeBandLeft = true, EdgeBandRight = false
+            Label = "Shelf, left", Color = "#AABBCC"
         });
         project.Parts.Add(new Part(500, 300, TestMaterials.Id("Birch"))
         {
-            Label = "Door", GroupTag = "Hall", EdgeBandBottom = true, EdgeBandRight = true
+            Label = "Door"
         });
         return project;
     }

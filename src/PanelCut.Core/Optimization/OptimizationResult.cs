@@ -24,8 +24,7 @@ public sealed record StockSnapshot(
 
 public sealed record PartSnapshot(
     Guid Id, double Width, double Height, int Quantity, string Material,
-    string Label, bool EdgeBandTop, bool EdgeBandBottom,
-    bool EdgeBandLeft, bool EdgeBandRight, string GroupTag,
+    string Label, string Color,
     Guid MaterialId, string MaterialType, double Thickness);
 
 public sealed record JobSettings(Guid BladeId, string BladeName, double KerfWidth, LengthUnit Unit);

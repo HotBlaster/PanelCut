@@ -25,8 +25,7 @@ public sealed class PanelOptimizer
         {
             var material = Resolve(part.MaterialId);
             return new Demand(new PartSnapshot(part.Id, part.Width, part.Height, part.Quantity, material.Name,
-                part.Label, part.EdgeBandTop, part.EdgeBandBottom, part.EdgeBandLeft,
-                part.EdgeBandRight, part.GroupTag, material.Id, material.Type, material.Thickness));
+                part.Label, part.Color, material.Id, material.Type, material.Thickness));
         }).ToArray();
         var orderedDemand = demand.OrderByDescending(item => item.Area)
             .ThenByDescending(item => Math.Max(item.Part.Width, item.Part.Height)).ToArray();

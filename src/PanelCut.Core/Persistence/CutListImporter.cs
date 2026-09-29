@@ -13,8 +13,7 @@ public static class CutListImporter
 {
     private static readonly string[] Required = ["Width", "Height", "Material"];
     private static readonly string[] Supported =
-        ["Label", "Width", "Height", "Quantity", "Material", "Type", "Thickness",
-         "EdgeBandTop", "EdgeBandBottom", "EdgeBandLeft", "EdgeBandRight", "GroupTag"];
+        ["Label", "Width", "Height", "Quantity", "Material", "Type", "Thickness", "Color"];
 
     public static async Task<CutListImport> LoadAsync(string path, MaterialCatalogue catalogue, CancellationToken cancellationToken = default) =>
         Parse(await File.ReadAllTextAsync(path, cancellationToken), catalogue);
@@ -65,11 +64,7 @@ public static class CutListImporter
             ResolveMaterial(Value("Material"), Value("Type"), Value("Thickness"), catalogue), Quantity(Value("Quantity")))
         {
             Label = Value("Label"),
-            GroupTag = Value("GroupTag"),
-            EdgeBandTop = Flag(Value("EdgeBandTop"), "EdgeBandTop"),
-            EdgeBandBottom = Flag(Value("EdgeBandBottom"), "EdgeBandBottom"),
-            EdgeBandLeft = Flag(Value("EdgeBandLeft"), "EdgeBandLeft"),
-            EdgeBandRight = Flag(Value("EdgeBandRight"), "EdgeBandRight"),
+            Color = Color(Value("Color")),
         };
     }
 
@@ -77,24 +72,21 @@ public static class CutListImporter
     {
         if (name.Length == 0)
             throw new FormatException("Material is required.");
-        var matches = catalogue.Materials.Where(material => string.Equals(material.Name.Trim(), name, StringComparison.OrdinalIgnoreCase)).ToList();
-        if (matches.Count == 0)
-            throw new FormatException($"Material '{name}' is not in the catalogue.");
-        if (matches.Any(material => material.Name.Trim() == name))
-            matches.RemoveAll(material => material.Name.Trim() != name);
-        if (type.Length > 0)
-            matches.RemoveAll(material => !string.Equals(material.Type.Trim(), type, StringComparison.OrdinalIgnoreCase));
-        if (thickness.Length > 0)
-        {
-            var value = Number(thickness, "Thickness");
-            matches.RemoveAll(material => material.Thickness != value);
-        }
-        return matches.Count switch
-        {
-            1 => matches[0].Id,
-            0 => throw new FormatException($"No catalogue material '{name}' matches the given Type/Thickness."),
-            _ => throw new FormatException($"Material '{name}' matches {matches.Count} catalogue entries. Add Type and/or Thickness to choose one."),
-        };
+        var material = catalogue.Materials.FirstOrDefault(material => string.Equals(material.Name.Trim(), name, StringComparison.OrdinalIgnoreCase))
+            ?? throw new FormatException($"Material '{name}' is not in the catalogue.");
+        if (type.Length > 0 && !string.Equals(material.Type.Trim(), type, StringComparison.OrdinalIgnoreCase))
+            throw new FormatException($"Material '{name}' has type '{material.Type}', not '{type}'.");
+        if (thickness.Length > 0 && material.Thickness != Number(thickness, "Thickness"))
+            throw new FormatException($"Material '{name}' is {material.Thickness.ToString(CultureInfo.InvariantCulture)} mm thick, not {thickness} mm.");
+        return material.Id;
+    }
+
+    private static string Color(string value)
+    {
+        if (value.Length == 0)
+            return Part.DefaultColor;
+        try { return Validation.Color(value); }
+        catch (ArgumentException) { throw new FormatException($"Color must be in #RRGGBB format (found '{value}')."); }
     }
 
     private static double Number(string value, string column)
@@ -114,13 +106,6 @@ public static class CutListImporter
             throw new FormatException($"Quantity must be a whole number of at least 1 (found '{value}').");
         return quantity;
     }
-
-    private static bool Flag(string value, string column) => value.ToLowerInvariant() switch
-    {
-        "" or "0" or "false" or "no" or "n" => false,
-        "1" or "true" or "yes" or "y" or "x" => true,
-        _ => throw new FormatException($"{column} must be yes/no, true/false, 1/0 or x (found '{value}')."),
-    };
 
     private static char DetectDelimiter(string text)
     {

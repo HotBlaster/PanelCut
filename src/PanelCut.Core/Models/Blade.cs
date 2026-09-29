@@ -43,10 +43,8 @@ public sealed class BladeCatalogue
             throw new ArgumentException("Blades cannot contain null entries.");
         Validation.UniqueIds(Brands.Select(brand => brand.Id));
         Validation.UniqueIds(Blades.Select(blade => blade.Id));
-        var duplicate = Brands.GroupBy(brand => brand.Name, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault(group => group.Count() > 1);
-        if (duplicate is not null)
-            throw new ArgumentException($"Brand \"{duplicate.Key}\" is defined more than once.");
+        Validation.UniqueNames(Brands.Select(brand => brand.Name), "Brand");
+        Validation.UniqueNames(Blades.Select(blade => blade.Name), "Blade");
         var brandIds = Brands.Select(brand => brand.Id).ToHashSet();
         var orphan = Blades.FirstOrDefault(blade => blade.BrandId is { } id && !brandIds.Contains(id));
         if (orphan is not null)

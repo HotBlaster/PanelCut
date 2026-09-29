@@ -115,14 +115,14 @@ and `FromMillimetres` at application boundaries; one inch is exactly 25.4 mm.
 | Model | Data |
 | --- | --- |
 | Material | Id, Name, Type, Thickness (mm); immutable catalogue entry |
-| MaterialCatalogue | Materials list; unique IDs and explicit resolution |
+| MaterialCatalogue | Materials list; unique IDs, names unique ignoring case, explicit resolution |
 | IStockItem / Panel | Id, Width, Height, MaterialId, Label, Quantity, Priority, CostPerUnit, EdgeTrim; computed UsableWidth, UsableHeight, IsUsable |
 | Scrap | Same stock fields, plus nullable OriginPanelId |
-| Part | Id, Width, Height, Quantity, Label, MaterialId, EdgeBandTop/Bottom/Left/Right, GroupTag |
+| Part | Id, Width, Height, Quantity, Label, MaterialId, Color (#RRGGBB) |
 | Inventory | Separate typed Panels and Scraps lists |
 | Brand | Id, Name; immutable, names unique ignoring case |
 | Blade | Id, Name, Diameter (mm), Teeth, Kerf (mm), optional BrandId, BrandCode; immutable |
-| BladeCatalogue | Brands and Blades lists; unique IDs, brand references must resolve |
+| BladeCatalogue | Brands and Blades lists; unique IDs, blade names unique ignoring case, brand references must resolve |
 | Project | Parts list, optional BladeId, Unit |
 
 Panels, scraps and parts reference a catalogue material by stable ID. Name, Type
@@ -133,8 +133,9 @@ Optimization results remain detached snapshots of their original run.
 
 An origin ID can reference a
 panel no longer in inventory; `null` means unknown/manual origin. Removing a
-panel does not delete its scraps. GroupTag is the stable color-group key;
-no UI color types are stored in Core.
+panel does not delete its scraps. Part Color is a `#RRGGBB` string (stored
+upper case, default `#D5DDDB` grey) used to fill the part in layouts; all copies
+of a part share it. No UI color types are stored in Core.
 
 Validation and defaults:
 
@@ -152,8 +153,9 @@ Validation and defaults:
 - CostPerUnit is a nonnegative decimal, default 0; currency is not specified
   in this milestone.
 - Material Name and Type cannot be blank/null; MaterialId must be nonempty.
-  Material thickness must be positive and finite. Labels and group tags default to empty text,
-  but cannot be null. Banding flags default to false.
+  Material thickness must be positive and finite. Labels default to empty text,
+  but cannot be null. Material and blade names must be unique, compared
+  ignoring case and surrounding spaces; files with duplicates fail to load.
 - Project.Unit defaults to Millimetres (other value: Inches).
   Unknown enum values are rejected.
 - New records receive nonempty GUIDs. Inventory IDs must be unique across
@@ -336,17 +338,16 @@ Project example:
       "materialId": "c73849ce-7aef-4c4b-9c12-045c09e88cb9",
       "quantity": 3,
       "label": "Shelf",
-      "edgeBandTop": true,
-      "edgeBandBottom": false,
-      "edgeBandLeft": true,
-      "edgeBandRight": false,
-      "groupTag": "Kitchen"
+      "color": "#B9D4EB"
     }
   ],
   "bladeId": "9b8e7c6d-1a2b-4c3d-8e9f-0a1b2c3d4e5f",
   "unit": "inches"
 }
 ```
+
+Older project files containing `edgeBandTop/Bottom/Left/Right` or `groupTag`
+still load; those fields are ignored and not written on the next save.
 
 The example part is 254 x 127 mm, displayed as 10 x 5 inches. A project with
 `parts: []` and omitted settings loads with no blade selected and millimetres.
@@ -468,15 +469,17 @@ locations, including custom paths. A missing folder is reported without creating
 files or directories.
 
 1. Open **Materials** and add entries with Name, Type and Thickness (mm).
+  Names must be unique (ignoring case); a duplicate name cannot be saved.
   Save a valid row with Enter, by leaving it, or with **Save**.
   Edits save only the catalogue and update every referencing item immediately.
   Invalid/failed saves retain previous effective material values; retry or
   cancel the draft. Permanent deletion is deferred to avoid breaking references
   in unopened projects. Save or cancel pending edits before changing views.
 2. Open **Panels** or **Scraps** and add an item. Each view has **All** plus a
-  tab per catalogue material (name, type and thickness), with independent
+  tab per catalogue material name, with independent
   selection. Adding under a material tab prefills that material. Filters never
-  remove stock; unresolved references remain visible in All. Select a material from the
+  remove stock; unresolved references remain visible in All. Select a material by
+  name from the
   dropdown and enter dimensions; thickness is read-only from the catalogue.
   All stock lengths are explicitly in mm. Selecting a material fills a blank
   or whitespace-only Label with its Name. Nonblank labels are preserved;
@@ -520,11 +523,11 @@ files or directories.
   sheet selector or arrows to navigate. Expand Unplaced parts for unmet demand.
 
 Layouts fit the viewport automatically. The outer trim uses a warm hatch,
-remaining scrap a pale hatch, and parts stable group colors. Small labels are
+remaining scrap a pale hatch, and parts their chosen color (Colour column in
+the Parts grid; grey by default). Small labels are
 clipped or omitted instead of overlapping; hover for full dimensions, label,
 copy index and rotation. Dimensions in sheet captions use the result's project
-unit; the stock selector retains raw mm dimensions. Part edge-banding metadata
-is editable/persisted but is not drawn as edge marks in this milestone.
+unit; the stock selector retains raw mm dimensions.
 
 Changed committed input invalidates the previous layout. Optimize never changes
 stock quantities or writes inventory. Pending stock edits must be saved or
@@ -533,7 +536,7 @@ stock editing and Optimize until it can be successfully reloaded; the app never
 silently replaces it with empty stock. Close/file/edit actions are blocked while
 a save or optimization is in progress. Invalid/corrupt materials likewise block
 material-dependent editing and optimization until **Reload materials** succeeds.
-Missing references display a selection-required status and can be explicitly
+Missing references display a selection-required stock status and can be explicitly
 reassigned through normal manual row edits.
 
 ### Desktop Verification

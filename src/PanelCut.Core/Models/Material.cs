@@ -24,6 +24,7 @@ public sealed class MaterialCatalogue
         if (Materials.Any(material => material is null))
             throw new ArgumentException("Materials cannot contain null entries.");
         Validation.UniqueIds(Materials.Select(material => material.Id));
+        Validation.UniqueNames(Materials.Select(material => material.Name), "Material");
     }
 
     public Material Resolve(Guid id) => Materials.FirstOrDefault(material => material.Id == id)

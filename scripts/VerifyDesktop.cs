@@ -246,7 +246,6 @@ internal static class VerifyDesktop
                 SelectMaterial(parts, part, oakId);
                 Check(part.Label == "Shelf" && part.Thickness == "18", "Part selection supplies thickness and preserves label");
                 SetCell(parts, part, "Quantity", "6");
-                SetCell(parts, part, "GroupTag", "Kitchen");
                 parts.CommitEdit(DataGridEditingUnit.Cell, true);
                 Check(parts.CommitEdit(DataGridEditingUnit.Row, true), "Valid part row commits");
                 Check(workspace.Project.Parts.Single().Width == 254, "Part model receives committed width");
@@ -275,8 +274,8 @@ internal static class VerifyDesktop
                 Check(kerfDisplay.Text == $"Kerf {EditableRow.Format(3.2 / 25.4)} inch" && workspace.Project.BladeId == fineId,
                     "Kerf display follows the project unit");
                 Field<ComboBox>(window, "UnitInput").SelectedIndex = 0;
-                workspace.Parts.Add(workspace.CreatePartRow(new Part(600, 400, oakId, 4) { Label = "Cabinet side", GroupTag = "Bedroom" }));
-                workspace.Parts.Add(workspace.CreatePartRow(new Part(9999, 9999, oakId) { Label = "Oversize", GroupTag = "Hall" }));
+                workspace.Parts.Add(workspace.CreatePartRow(new Part(600, 400, oakId, 4) { Label = "Cabinet side", Color = "#B9D4EB" }));
+                workspace.Parts.Add(workspace.CreatePartRow(new Part(9999, 9999, oakId) { Label = "Oversize" }));
                 Check(Invoke<bool>(window, "CommitProject"), "Mixed project commits");
                 await Invoke<Task>(window, "OptimizeAsync");
                 await Drain();
@@ -443,7 +442,7 @@ internal static class VerifyDesktop
                 await new MaterialStore(workspace.MaterialsPath).SaveAsync(new MaterialCatalogue());
                 await Invoke<Task>(window, "LoadMaterialsAsync");
                 Check(workspace.Inventory.Panels[0].MaterialId == oakId && workspace.Panels[0].MaterialId == oakId
-                    && workspace.Panels[0].MaterialStatus == "Select material", "Missing references remain visible and retain their IDs");
+                    && workspace.Panels[0].Usability == "Select material", "Missing references remain visible and retain their IDs");
                 workspace.Parts.Add(workspace.CreatePartRow(new Part(100, 100, oakId)));
                 Invoke<object?>(window, "RefreshProjectControls");
                 Field<ComboBox>(window, "BladeInput").SelectedValue = fineId;
@@ -598,6 +597,9 @@ internal static class VerifyDesktop
         SetCell(grid, draft, "Teeth", "24");
         SetCell(grid, draft, "Kerf", "2");
         Check(!grid.CommitEdit(DataGridEditingUnit.Row, true), "Invalid blade diameter cannot commit");
+        SetCell(grid, draft, "Diameter", "250");
+        SetCell(grid, draft, "Name", "RIP");
+        Check(!grid.CommitEdit(DataGridEditingUnit.Row, true), "Duplicate blade names are rejected ignoring case");
         Call(window, "CancelBladeClick");
         await Drain();
         Check(workspace.BladeRows.Count == 2 && workspace.BrandRows.Count == 1 && !Field<bool>(window, "bladePending")
@@ -770,18 +772,23 @@ internal static class VerifyDesktop
             Check(grid.Items.Count == rows.Count, "All restores the complete stock list");
         }
 
-        var duplicate = new Material("Oak renamed", "Plywood", 19);
+        var duplicate = new Material("OAK RENAMED", "Plywood", 19);
         var longName = new Material("Decorative laminated furniture panel with a long material name", "Laminated plywood", 22);
         workspace.Materials.Add(new MaterialRow(duplicate));
+        var duplicateRejected = false;
+        try { workspace.MaterialCandidate(); }
+        catch (ArgumentException) { duplicateRejected = true; }
+        Check(duplicateRejected, "Duplicate material names are rejected ignoring case");
+        workspace.Materials.RemoveAt(workspace.Materials.Count - 1);
         workspace.Materials.Add(new MaterialRow(longName));
         await workspace.CommitManualMaterialEditAsync(workspace.MaterialCandidate());
         await SelectStockMaterial(window, false, oakId);
         await Invoke<Task>(window, "LoadMaterialsAsync");
         Check(((MaterialOption)panelTabs.SelectedItem).Id == oakId, "Catalogue reload preserves material tab selection by ID");
-        Check(panelTabs.Items.Cast<MaterialOption>().Count(option => option.Display == duplicate.Name) == 2,
-            "Identically named materials retain separate ID-based tabs");
-        await SelectStockMaterial(window, false, duplicate.Id);
-        Check(Field<DataGrid>(window, "PanelsGrid").Items.Count == 0, "Duplicate material names do not merge stock groups");
+        Check(workspace.MaterialOptions.All(option => option.Display == workspace.Catalogue.Resolve(option.Id).Name),
+            "Material dropdowns list names only");
+        await SelectStockMaterial(window, false, longName.Id);
+        Check(Field<DataGrid>(window, "PanelsGrid").Items.Count == 0, "Unused material tab shows no stock");
         foreach (var width in new[] { 1280, 960 })
         {
             window.Width = width;
@@ -911,7 +918,10 @@ internal static class VerifyDesktop
                     grid.ScrollIntoView(row, column);
                     grid.UpdateLayout();
                     var content = column.GetCellContent(row);
-                    if (column is DataGridTextColumn || column is DataGridTemplateColumn)
+                    if (column is DataGridTemplateColumn && row is PartRow part && Find<Button>(content) is { } swatch)
+                        Check(swatch.Content is Border { Background: SolidColorBrush brush } && brush.Color.ToString() == $"#FF{part.Color[1..]}",
+                            $"{gridName} colour swatch shows the part colour");
+                    else if (column is DataGridTextColumn || column is DataGridTemplateColumn)
                     {
                         var property = column is DataGridTextColumn textColumn
                             ? ((Binding)textColumn.Binding).Path.Path : column.SortMemberPath;

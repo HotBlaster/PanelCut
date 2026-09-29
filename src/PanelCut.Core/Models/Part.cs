@@ -16,9 +16,7 @@ public sealed class Part
     public int Quantity { get; set => field = Validation.Quantity(value, 1); }
     public Guid MaterialId { get; set => field = Validation.Id(value); }
     public string Label { get; set => field = value ?? throw new ArgumentNullException(nameof(Label)); } = string.Empty;
-    public bool EdgeBandTop { get; set; }
-    public bool EdgeBandBottom { get; set; }
-    public bool EdgeBandLeft { get; set; }
-    public bool EdgeBandRight { get; set; }
-    public string GroupTag { get; set => field = value ?? throw new ArgumentNullException(nameof(GroupTag)); } = string.Empty;
+    public string Color { get; set => field = Validation.Color(value); } = DefaultColor;
+
+    public const string DefaultColor = "#D5DDDB";
 }

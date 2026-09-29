@@ -146,11 +146,14 @@ internal sealed class PartDocument
     [JsonRequired] public Guid MaterialId { get; set; }
     public int Quantity { get; set; } = 1;
     public string Label { get; set; } = string.Empty;
-    public bool EdgeBandTop { get; set; }
-    public bool EdgeBandBottom { get; set; }
-    public bool EdgeBandLeft { get; set; }
-    public bool EdgeBandRight { get; set; }
-    public string GroupTag { get; set; } = string.Empty;
+    public string Color { get; set; } = Part.DefaultColor;
+
+    // Legacy fields from older project files: accepted on load, never written.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool EdgeBandTop { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool EdgeBandBottom { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool EdgeBandLeft { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool EdgeBandRight { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? GroupTag { get; set; }
 
     public PartDocument() { }
 
@@ -162,21 +165,13 @@ internal sealed class PartDocument
         MaterialId = part.MaterialId;
         Quantity = part.Quantity;
         Label = part.Label;
-        EdgeBandTop = part.EdgeBandTop;
-        EdgeBandBottom = part.EdgeBandBottom;
-        EdgeBandLeft = part.EdgeBandLeft;
-        EdgeBandRight = part.EdgeBandRight;
-        GroupTag = part.GroupTag;
+        Color = part.Color;
     }
 
     internal Part ToModel() => new(Width, Height, MaterialId, Quantity)
     {
         Id = Id,
         Label = Label,
-        EdgeBandTop = EdgeBandTop,
-        EdgeBandBottom = EdgeBandBottom,
-        EdgeBandLeft = EdgeBandLeft,
-        EdgeBandRight = EdgeBandRight,
-        GroupTag = GroupTag
+        Color = Color
     };
 }
