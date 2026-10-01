@@ -47,6 +47,37 @@
                 <Border Background="{Binding Color}" BorderBrush="#7A8A86" BorderThickness="1" Width="44" Height="14"/>
             </Button>
         </DataTemplate>
+        <controls:LastItemVisibilityConverter x:Key="LastItemVisibility"/>
+        <Style x:Key="RowActionButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="24"/><Setter Property="Height" Value="24"/><Setter Property="MinHeight" Value="0"/>
+            <Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="2,0"/><Setter Property="Focusable" Value="False"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Tag" Value="{Binding RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+        </Style>
+        <Style x:Key="RowAddButtonStyle" TargetType="Button" BasedOn="{StaticResource RowActionButtonStyle}">
+            <Setter Property="Content" Value="+"/>
+            <Setter Property="ToolTip" Value="Add a row"/>
+            <Setter Property="AutomationProperties.Name" Value="Add row"/>
+            <Setter Property="Visibility">
+                <Setter.Value>
+                    <MultiBinding Converter="{StaticResource LastItemVisibility}">
+                        <Binding/>
+                        <Binding RelativeSource="{RelativeSource AncestorType=DataGrid}"/>
+                        <Binding Path="Items.Count" RelativeSource="{RelativeSource AncestorType=DataGrid}"/>
+                    </MultiBinding>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <DataTemplate x:Key="RowActionsTemplate">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="-" Click="RowRemoveClick" Style="{StaticResource RowActionButtonStyle}"
+                        ToolTip="Delete this row" AutomationProperties.Name="Delete row"/>
+                <Button Click="RowAddClick" Style="{StaticResource RowAddButtonStyle}"/>
+            </StackPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="RowAddTemplate">
+            <Button Click="RowAddClick" Style="{StaticResource RowAddButtonStyle}" HorizontalAlignment="Left"/>
+        </DataTemplate>
         <Style TargetType="TabItem"><Setter Property="Padding" Value="18,10"/></Style>
         <Style x:Key="MaterialTabsStyle" TargetType="TabControl">
             <Setter Property="Margin" Value="0,0,0,10"/>
@@ -141,6 +172,9 @@
                                    AutomationProperties.AutomationId="Kerf"/>
                         <TextBlock Text="Units" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <ComboBox x:Name="UnitInput" Width="100" Padding="4" SelectionChanged="UnitChanged" AutomationProperties.AutomationId="Units"/>
+                        <TextBlock Text="Cut pattern" VerticalAlignment="Center" Margin="24,0,8,0"/>
+                        <ComboBox x:Name="CutPatternInput" Width="120" Padding="4" SelectionChanged="CutPatternChanged" AutomationProperties.AutomationId="CutPattern"
+                                  ToolTip="By length: strips along the sheet's long side. By width: strips across it. Optimal: mixed cut directions."/>
                     </WrapPanel>
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
                         <Button x:Name="AddPartButton" Content="+ Part" Click="AddPartClick" AutomationProperties.AutomationId="AddPart"/>

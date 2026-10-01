@@ -5,6 +5,7 @@ public sealed class Project
     public List<Part> Parts { get; } = [];
     public Guid? BladeId { get; set => field = value is { } id ? Validation.Id(id) : null; }
     public LengthUnit Unit { get; set => field = Validation.Defined(value); } = LengthUnit.Millimetres;
+    public CutPattern CutPattern { get; set => field = Validation.Defined(value); } = CutPattern.Optimal;
 
     public void Validate()
     {

@@ -8,6 +8,7 @@ using System.IO;
 using System.Globalization;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
@@ -148,7 +149,7 @@ internal static class VerifyDesktop
                 Call(window, "CancelMaterialClick");
                 await Drain();
                 birchRow = workspace.Materials.Single(material => material.Id == birchId);
-                var nameContent = (TextBlock)materialsGrid.Columns[0].GetCellContent(birchRow);
+                var nameContent = (TextBlock)materialsGrid.Columns[1].GetCellContent(birchRow);
                 Check(nameContent.VerticalAlignment == VerticalAlignment.Center && nameContent.TextAlignment == TextAlignment.Left,
                     "Material names are vertically centered and remain left-aligned");
                 var thicknessColumn = materialsGrid.Columns.Single(column => column.SortMemberPath == "Thickness");
@@ -179,13 +180,13 @@ internal static class VerifyDesktop
                 var grid = Field<DataGrid>(window, "PanelsGrid");
                 foreach (var stockGrid in new[] { grid, Field<DataGrid>(window, "ScrapsGrid") })
                 {
-                    Check((string)stockGrid.Columns.OrderBy(column => column.DisplayIndex).First().Header == "Label",
-                        $"{stockGrid.Name} starts with Label");
-                    Check(stockGrid.CanUserReorderColumns && stockGrid.Columns.All(column => column.CanUserReorder),
+                    Check((string)stockGrid.Columns.OrderBy(column => column.DisplayIndex).Skip(1).First().Header == "Label",
+                        $"{stockGrid.Name} starts with Label after the row buttons");
+                    Check(stockGrid.CanUserReorderColumns && stockGrid.Columns.Skip(1).All(column => column.CanUserReorder),
                         $"{stockGrid.Name} allows column reordering");
-                    stockGrid.Columns[0].DisplayIndex = 2;
-                    Check(stockGrid.Columns[0].DisplayIndex == 2, $"{stockGrid.Name} accepts a changed column order");
-                    stockGrid.Columns[0].DisplayIndex = 0;
+                    stockGrid.Columns[1].DisplayIndex = 3;
+                    Check(stockGrid.Columns[1].DisplayIndex == 3, $"{stockGrid.Name} accepts a changed column order");
+                    stockGrid.Columns[1].DisplayIndex = 1;
                 }
                 var row = workspace.Panels.Single();
                 SelectMaterial(grid, row, oakId);
@@ -194,14 +195,19 @@ internal static class VerifyDesktop
                 SetCell(grid, row, "Height", "800");
                 SetCell(grid, row, "Quantity", "3");
                 SetCell(grid, row, "Priority", "-2");
-                SetCell(grid, row, "EdgeTrim", "10");
+                SetCell(grid, row, "TrimTop", "10");
+                SetCell(grid, row, "TrimBottom", "20");
+                SetCell(grid, row, "TrimLeft", "3.2");
+                SetCell(grid, row, "TrimRight", "0");
                 Check(grid.CommitEdit(DataGridEditingUnit.Cell, true), "Valid stock cell commits");
                 Check(grid.CommitEdit(DataGridEditingUnit.Row, true), "Valid stock row commits");
                 await Field<Task>(window, "stockSave");
                 await Drain();
                 Check(File.Exists(workspace.InventoryPath), "Manual stock commit creates file");
                 var stock = await new InventoryStore(workspace.InventoryPath).LoadAsync();
-                Check(stock.Panels.Single().Priority == -2 && stock.Panels[0].EdgeTrim == 10, "Stock metadata persists");
+                var savedPanel = stock.Panels.Single();
+                Check(savedPanel.Priority == -2 && (savedPanel.TrimTop, savedPanel.TrimBottom, savedPanel.TrimLeft, savedPanel.TrimRight) == (10, 20, 3.2, 0),
+                    "Stock metadata and per-edge trims persist, accepting '.' as decimal separator");
                 var before = await File.ReadAllBytesAsync(workspace.InventoryPath);
 
                 SetCell(grid, row, "Width", "-1");
@@ -324,13 +330,11 @@ internal static class VerifyDesktop
                 SetCell(scrapGrid, scrapRow, "Width", "100");
                 SetCell(scrapGrid, scrapRow, "Height", "80");
                 SetCell(scrapGrid, scrapRow, "Quantity", "0");
-                SetCell(scrapGrid, scrapRow, "EdgeTrim", "50");
-                SetCell(scrapGrid, scrapRow, "OriginPanelId", "invalid");
-                Check(!scrapGrid.CommitEdit(DataGridEditingUnit.Row, true), "Invalid scrap origin cannot commit");
-                SetCell(scrapGrid, scrapRow, "OriginPanelId", "");
+                Check(scrapGrid.Columns.OfType<DataGridTextColumn>().All(column => ((Binding)column.Binding).Path.Path is not ("TrimTop" or "OriginPanelId")),
+                    "Scraps have no trim or origin panel columns");
                 Check(scrapGrid.CommitEdit(DataGridEditingUnit.Row, true), "Valid depleted scrap commits");
                 await Field<Task>(window, "stockSave");
-                Check(workspace.Inventory.Scraps.Single().Quantity == 0 && !workspace.Inventory.Scraps[0].IsUsable, "Zero quantity and unusable trim persist");
+                Check(workspace.Inventory.Scraps.Single().Quantity == 0 && workspace.Inventory.Scraps[0].IsUsable, "Zero quantity persists and untrimmed scrap is usable");
                 SelectMaterial(scrapGrid, scrapRow, oakId);
                 Check(scrapRow.Label == "Birch", "Reselecting material preserves nonblank label");
                 Check(scrapGrid.CommitEdit(DataGridEditingUnit.Row, true), "Scrap material change commits");
@@ -555,7 +559,7 @@ internal static class VerifyDesktop
         SetCell(grid, fine, "BrandCode", "LU3D 1000");
         SetCell(grid, fine, "Diameter", "250");
         SetCell(grid, fine, "Teeth", "80");
-        SetCell(grid, fine, "Kerf", EditableRow.Format(3.2));
+        SetCell(grid, fine, "Kerf", "3.2");
         await SaveBladeRow(window, grid, "Blade with a new brand commits");
         var saved = await new BladeStore(workspace.BladesPath).LoadAsync();
         var freud = saved.Brands.Single();
@@ -605,6 +609,16 @@ internal static class VerifyDesktop
         Check(workspace.BladeRows.Count == 2 && workspace.BrandRows.Count == 1 && !Field<bool>(window, "bladePending")
             && Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.BladesPath)),
             "Cancelling a draft with a new brand creates neither the blade nor the brand");
+        Click(RowButton(grid, workspace.BladeRows.Last(), "Add row"));
+        await Drain();
+        var rowDraft = workspace.BladeRows.Last();
+        Check(workspace.BladeRows.Count == 3 && rowDraft.IsEditing, "Blade row + adds a draft blade");
+        Click(RowButton(grid, rowDraft, "Delete row"));
+        await Field<Task>(window, "bladeSave");
+        await Drain();
+        Check(workspace.BladeRows.Count == 2 && !Field<bool>(window, "bladePending")
+            && Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.BladesPath)),
+            "Blade row - discards an unsaved draft without writing blades");
 
         var brandRow = workspace.BrandRows.Single();
         SetCell(brandsGrid, brandRow, "Name", "Freud Tools");
@@ -770,6 +784,7 @@ internal static class VerifyDesktop
             Check(savedIds.All(id => !ids.Contains(id)) && savedIds.Contains(other.Id), "Bulk deletion persists selected IDs only");
             await SelectStockMaterial(window, scrap, Guid.Empty);
             Check(grid.Items.Count == rows.Count, "All restores the complete stock list");
+            await VerifyRowButtonsAsync(window, workspace, grid, rows);
         }
 
         var duplicate = new Material("OAK RENAMED", "Plywood", 19);
@@ -893,8 +908,62 @@ internal static class VerifyDesktop
     }
 
     private static bool IsNumericProperty(string property) =>
-        property is "Width" or "Height" or "Quantity" or "Thickness" or "Priority" or "CostPerUnit" or "EdgeTrim"
+        property is "Width" or "Height" or "Quantity" or "Thickness" or "Priority" or "CostPerUnit"
+            or "TrimTop" or "TrimBottom" or "TrimLeft" or "TrimRight"
             or "Diameter" or "Teeth" or "Kerf";
+
+    private static async Task VerifyRowButtonsAsync(MainWindow window, WorkspaceViewModel workspace, DataGrid grid, IList<StockRow> rows)
+    {
+        var kind = grid.Name;
+        var last = rows.Last();
+        Check(RowButton(grid, last, "Add row").Visibility == Visibility.Visible
+            && rows.Take(rows.Count - 1).All(row => RowButton(grid, row, "Add row").Visibility != Visibility.Visible),
+            $"{kind}: only the last row shows +");
+        var before = await File.ReadAllBytesAsync(workspace.InventoryPath);
+        var count = rows.Count;
+        Click(RowButton(grid, last, "Add row"));
+        await Drain();
+        var added = rows.Last();
+        Check(rows.Count == count + 1 && added.IsEditing && grid.CurrentColumn is DataGridTextColumn or DataGridComboBoxColumn,
+            $"{kind}: row + adds a new row in edit mode like the toolbar button");
+        Check(RowButton(grid, added, "Add row").Visibility == Visibility.Visible && RowButton(grid, last, "Add row").Visibility != Visibility.Visible,
+            $"{kind}: + moves to the new last row");
+        Click(RowButton(grid, added, "Delete row"));
+        await Field<Task>(window, "stockSave");
+        await Drain();
+        Check(!rows.Contains(added) && rows.Count == count && !Field<bool>(window, "stockPending")
+            && Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.InventoryPath)),
+            $"{kind}: row - discards an unsaved new row without writing inventory");
+        Click(RowButton(grid, last, "Delete row"));
+        await Field<Task>(window, "stockSave");
+        await Drain();
+        var saved = await new InventoryStore(workspace.InventoryPath).LoadAsync();
+        Check(rows.All(row => row.Id != last.Id) && saved.Panels.Concat<IStockItem>(saved.Scraps).All(item => item.Id != last.Id)
+            && !Field<bool>(window, "stockPending"),
+            $"{kind}: row - deletes a saved row immediately without confirmation");
+        if (rows.Count > 0)
+            Check(RowButton(grid, rows.Last(), "Add row").Visibility == Visibility.Visible, $"{kind}: + returns to the remaining last row");
+    }
+
+    private static Button RowButton(DataGrid grid, object row, string name)
+    {
+        grid.ScrollIntoView(row, grid.Columns[0]);
+        grid.UpdateLayout();
+        return Descendants<Button>(grid.Columns[0].GetCellContent(row)).Single(button => AutomationProperties.GetName(button) == name);
+    }
+
+    private static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, button));
+
+    private static IEnumerable<T> Descendants<T>(DependencyObject? parent) where T : DependencyObject
+    {
+        if (parent is null)
+            yield break;
+        if (parent is T self)
+            yield return self;
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+            foreach (var nested in Descendants<T>(VisualTreeHelper.GetChild(parent, index)))
+                yield return nested;
+    }
 
     private static async Task VerifyTableLayoutAsync(MainWindow window)
     {
@@ -918,7 +987,14 @@ internal static class VerifyDesktop
                     grid.ScrollIntoView(row, column);
                     grid.UpdateLayout();
                     var content = column.GetCellContent(row);
-                    if (column is DataGridTemplateColumn && row is PartRow part && Find<Button>(content) is { } swatch)
+                    if (column == grid.Columns[0])
+                    {
+                        var names = Descendants<Button>(content).Select(AutomationProperties.GetName).ToArray();
+                        Check(column.Header is null && column.IsReadOnly
+                            && names.SequenceEqual(gridName == "MaterialsGrid" ? ["Add row"] : new[] { "Delete row", "Add row" }),
+                            $"{gridName} starts with the row button column at {width}");
+                    }
+                    else if (column is DataGridTemplateColumn && row is PartRow part && Find<Button>(content) is { } swatch)
                         Check(swatch.Content is Border { Background: SolidColorBrush brush } && brush.Color.ToString() == $"#FF{part.Color[1..]}",
                             $"{gridName} colour swatch shows the part colour");
                     else if (column is DataGridTextColumn || column is DataGridTemplateColumn)
@@ -1020,7 +1096,8 @@ internal static class VerifyDesktop
                 PositiveNumberInput.Increase.Execute(null, editor);
                 Check(editor.Text == $"1{separator}5", $"Spinner preserves decimals in {culture}");
                 editor.SelectAll();
-                foreach (var (input, rejected) in new[] { ("abc", true), ("-2", true), ($"1{separator}2{separator}3", true), ($"0{separator}5", false) })
+                foreach (var (input, rejected) in new[] { ("abc", true), ("-2", true), ($"1{separator}2{separator}3", true), ($"0{separator}5", false),
+                    ("0.5", false), ("1.2,3", true) })
                 {
                     var args = new TextCompositionEventArgs(Keyboard.PrimaryDevice,
                         new TextComposition(InputManager.Current, editor, input))
@@ -1031,12 +1108,14 @@ internal static class VerifyDesktop
                         .Invoke(editor, [args]);
                     Check(args.Handled == rejected, $"Typing '{input}' is {(rejected ? "rejected" : "accepted")} in {culture}");
                 }
-                foreach (var (input, rejected) in new[] { ("abc", true), ("-2", true), ("0", true), ("NaN", true), ($"0{separator}5", false) })
+                foreach (var (input, rejected) in new[] { ("abc", true), ("-2", true), ("0", true), ("NaN", true), ($"0{separator}5", false), ("0.5", false) })
                 {
                     var args = new DataObjectPastingEventArgs(new DataObject(DataFormats.UnicodeText, input), false, DataFormats.UnicodeText);
                     editor.RaiseEvent(args);
                     Check(args.CommandCancelled == rejected, $"Pasting '{input}' is {(rejected ? "rejected" : "accepted")} in {culture}");
                 }
+                Check(EditableRow.Number("3.2", "Kerf") == 3.2 && EditableRow.Number($"3{separator}2", "Kerf") == 3.2,
+                    $"Numbers accept '.' and the culture separator in {culture}");
             }
         }
         finally { CultureInfo.CurrentCulture = originalCulture; }

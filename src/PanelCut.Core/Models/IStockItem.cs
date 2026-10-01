@@ -10,7 +10,6 @@ public interface IStockItem
     int Quantity { get; set; }
     int Priority { get; set; }
     decimal CostPerUnit { get; set; }
-    double EdgeTrim { get; set; }
     double UsableWidth { get; }
     double UsableHeight { get; }
     bool IsUsable { get; }

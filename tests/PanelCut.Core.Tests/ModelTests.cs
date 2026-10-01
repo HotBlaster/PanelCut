@@ -94,11 +94,15 @@ public class ModelTests
         var part = new Part(100, 200, TestMaterials.Id("Oak"));
         Assert.Equal(LengthUnit.Millimetres, project.Unit);
         Assert.Null(project.BladeId);
-        Assert.Equal(0, panel.EdgeTrim);
+        Assert.Equal(0, panel.TrimTop);
+        Assert.Equal(0, panel.TrimBottom);
+        Assert.Equal(0, panel.TrimLeft);
+        Assert.Equal(0, panel.TrimRight);
         Assert.Equal(0, panel.Priority);
         Assert.Equal(0m, panel.CostPerUnit);
         Assert.Equal(1, panel.Quantity);
-        Assert.Null(scrap.OriginPanelId);
+        Assert.Equal(400, scrap.UsableWidth);
+        Assert.Equal(300, scrap.UsableHeight);
         Assert.NotEqual(Guid.Empty, panel.Id);
         Assert.NotEqual(panel.Id, scrap.Id);
         Assert.NotEqual(Guid.Empty, part.Id);
@@ -111,20 +115,16 @@ public class ModelTests
     }
 
     [Theory]
-    [InlineData(0, 100, 80, true)]
-    [InlineData(5, 90, 70, true)]
-    [InlineData(40, 20, 0, false)]
-    [InlineData(60, -20, -40, false)]
-    public void TrimDeterminesUsableAreaForBothStockTypes(double trim, double width, double height, bool usable)
+    [InlineData(0, 0, 0, 0, 100, 80, true)]
+    [InlineData(5, 10, 15, 20, 65, 65, true)]
+    [InlineData(40, 40, 0, 0, 100, 0, false)]
+    [InlineData(0, 0, 60, 60, -20, 80, false)]
+    public void EachPanelEdgeTrimReducesUsableArea(double top, double bottom, double left, double right, double width, double height, bool usable)
     {
-        IStockItem[] stock = [new Panel(100, 80, TestMaterials.Id("Oak", 18)), new Scrap(100, 80, TestMaterials.Id("Oak", 18))];
-        foreach (var item in stock)
-        {
-            item.EdgeTrim = trim;
-            Assert.Equal(width, item.UsableWidth);
-            Assert.Equal(height, item.UsableHeight);
-            Assert.Equal(usable, item.IsUsable);
-        }
+        var panel = new Panel(100, 80, TestMaterials.Id("Oak", 18)) { TrimTop = top, TrimBottom = bottom, TrimLeft = left, TrimRight = right };
+        Assert.Equal(width, panel.UsableWidth);
+        Assert.Equal(height, panel.UsableHeight);
+        Assert.Equal(usable, panel.IsUsable);
     }
 
     [Theory]
@@ -134,15 +134,18 @@ public class ModelTests
     [InlineData(double.NegativeInfinity)]
     public void InvalidLengthsAreRejectedWithoutChangingPreviousValues(double invalid)
     {
-        var panel = new Panel(100, 80, TestMaterials.Id("Oak", 18)) { EdgeTrim = 2 };
+        var panel = new Panel(100, 80, TestMaterials.Id("Oak", 18)) { TrimTop = 1, TrimBottom = 2, TrimLeft = 3, TrimRight = 4 };
         var part = new Part(50, 40, TestMaterials.Id("Oak"));
-        Assert.Throws<ArgumentOutOfRangeException>(() => panel.EdgeTrim = invalid);
+        Assert.Throws<ArgumentOutOfRangeException>(() => panel.TrimTop = invalid);
+        Assert.Throws<ArgumentOutOfRangeException>(() => panel.TrimBottom = invalid);
+        Assert.Throws<ArgumentOutOfRangeException>(() => panel.TrimLeft = invalid);
+        Assert.Throws<ArgumentOutOfRangeException>(() => panel.TrimRight = invalid);
         Assert.Throws<ArgumentOutOfRangeException>(() => panel.Width = invalid);
         Assert.Throws<ArgumentOutOfRangeException>(() => panel.Height = invalid);
         Assert.Throws<ArgumentOutOfRangeException>(() => new Material("Oak", "Plywood", invalid));
         Assert.Throws<ArgumentOutOfRangeException>(() => part.Width = invalid);
         Assert.Throws<ArgumentOutOfRangeException>(() => part.Height = invalid);
-        Assert.Equal(2, panel.EdgeTrim);
+        Assert.Equal((1d, 2d, 3d, 4d), (panel.TrimTop, panel.TrimBottom, panel.TrimLeft, panel.TrimRight));
         Assert.Equal(100, panel.Width);
         Assert.Equal(50, part.Width);
     }
@@ -169,7 +172,6 @@ public class ModelTests
         Assert.Throws<ArgumentOutOfRangeException>(() => panel.CostPerUnit = -0.01m);
         Assert.Throws<ArgumentException>(() => panel.Id = Guid.Empty);
         Assert.Throws<ArgumentOutOfRangeException>(() => new Project().Unit = (LengthUnit)999);
-        Assert.Throws<ArgumentException>(() => new Scrap(10, 10, TestMaterials.Id("Oak", 1)).OriginPanelId = Guid.Empty);
         Assert.Equal(TestMaterials.Id("Oak"), panel.MaterialId);
         Assert.Equal(string.Empty, panel.Label);
         Assert.Throws<ArgumentNullException>(() => panel.Label = null!);

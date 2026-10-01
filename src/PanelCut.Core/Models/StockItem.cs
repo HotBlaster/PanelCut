@@ -22,8 +22,7 @@ public abstract class StockItem : IStockItem
         get;
         set => field = value >= 0 ? value : throw new ArgumentOutOfRangeException(nameof(CostPerUnit));
     }
-    public double EdgeTrim { get; set => field = Validation.NonNegative(value, nameof(EdgeTrim)); }
-    public double UsableWidth => Width - EdgeTrim - EdgeTrim;
-    public double UsableHeight => Height - EdgeTrim - EdgeTrim;
+    public virtual double UsableWidth => Width;
+    public virtual double UsableHeight => Height;
     public bool IsUsable => UsableWidth > 0 && UsableHeight > 0;
 }

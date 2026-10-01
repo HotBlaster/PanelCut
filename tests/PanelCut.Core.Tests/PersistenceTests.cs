@@ -194,6 +194,7 @@ public sealed class PersistenceTests : IDisposable
         Assert.Equal(bytes, await File.ReadAllBytesAsync(InventoryPath));
         using var json = JsonDocument.Parse(bytes);
         Assert.Equal(new[] { "panels", "schemaVersion", "scraps" }, json.RootElement.EnumerateObject().Select(property => property.Name).Order());
+        Assert.Equal(3, json.RootElement.GetProperty("schemaVersion").GetInt32());
         var panel = json.RootElement.GetProperty("panels")[0];
         Assert.False(panel.TryGetProperty("usableWidth", out _));
         Assert.False(panel.TryGetProperty("usableHeight", out _));
@@ -203,8 +204,12 @@ public sealed class PersistenceTests : IDisposable
         Assert.False(panel.TryGetProperty("material", out _));
         Assert.Equal(inventory.Panels[0].MaterialId, panel.GetProperty("materialId").GetGuid());
         Assert.Equal("Panel A", panel.GetProperty("label").GetString());
-        Assert.Equal(new[] { "costPerUnit", "edgeTrim", "height", "id", "label", "materialId", "priority", "quantity", "width" },
+        Assert.Equal(new[] { "costPerUnit", "height", "id", "label", "materialId", "priority", "quantity", "trimBottom", "trimLeft", "trimRight", "trimTop", "width" },
             panel.EnumerateObject().Select(property => property.Name).Order());
+        Assert.Equal((5d, 10d, 15d, 20d), (panel.GetProperty("trimTop").GetDouble(), panel.GetProperty("trimBottom").GetDouble(),
+            panel.GetProperty("trimLeft").GetDouble(), panel.GetProperty("trimRight").GetDouble()));
+        Assert.Equal(new[] { "costPerUnit", "height", "id", "label", "materialId", "priority", "quantity", "width" },
+            json.RootElement.GetProperty("scraps")[0].EnumerateObject().Select(property => property.Name).Order());
     }
 
     [Fact]
@@ -223,11 +228,12 @@ public sealed class PersistenceTests : IDisposable
         Assert.Equal(inventoryBytes, await File.ReadAllBytesAsync(InventoryPath));
         Assert.Equal(snapshot, JsonSerializer.Serialize(inventory));
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(ProjectPath));
-        Assert.Equal(new[] { "bladeId", "parts", "schemaVersion", "unit" },
+        Assert.Equal(new[] { "bladeId", "cutPattern", "parts", "schemaVersion", "unit" },
             json.RootElement.EnumerateObject().Select(property => property.Name).Order());
         Assert.Equal(new[] { "color", "height", "id", "label", "materialId", "quantity", "width" },
             json.RootElement.GetProperty("parts")[0].EnumerateObject().Select(property => property.Name).Order());
         Assert.Equal("inches", json.RootElement.GetProperty("unit").GetString());
+        Assert.Equal("byWidth", json.RootElement.GetProperty("cutPattern").GetString());
         Assert.Equal(254, json.RootElement.GetProperty("parts")[0].GetProperty("width").GetDouble());
         Assert.Equal(3, json.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(project.BladeId, loaded.BladeId);
@@ -260,6 +266,7 @@ public sealed class PersistenceTests : IDisposable
         var project = await new ProjectStore().LoadAsync(ProjectPath);
         Assert.Null(project.BladeId);
         Assert.Equal(LengthUnit.Millimetres, project.Unit);
+        Assert.Equal(CutPattern.Optimal, project.CutPattern);
         var stock = new JsonObject
         {
             ["id"] = Guid.NewGuid(), ["width"] = 100, ["height"] = 80,
@@ -267,13 +274,13 @@ public sealed class PersistenceTests : IDisposable
         };
         var document = new JsonObject
         {
-            ["schemaVersion"] = 2, ["panels"] = new JsonArray(stock), ["scraps"] = new JsonArray()
+            ["schemaVersion"] = 3, ["panels"] = new JsonArray(stock), ["scraps"] = new JsonArray()
         };
         await WriteJsonAsync(InventoryPath, document.ToJsonString());
         var panel = (await new InventoryStore(InventoryPath).LoadAsync()).Panels[0];
         Assert.Equal(1, panel.Quantity);
         Assert.Equal(0, panel.Priority);
-        Assert.Equal(0, panel.EdgeTrim);
+        Assert.Equal((0d, 0d, 0d, 0d), (panel.TrimTop, panel.TrimBottom, panel.TrimLeft, panel.TrimRight));
         Assert.Equal(0m, panel.CostPerUnit);
     }
 
@@ -292,6 +299,8 @@ public sealed class PersistenceTests : IDisposable
     [InlineData("{\"schemaVersion\":3,\"parts\":[],\"bladeId\":\"blade\"}")]
     [InlineData("{\"schemaVersion\":3,\"parts\":[],\"unit\":\"yards\"}")]
     [InlineData("{\"schemaVersion\":3,\"parts\":[],\"unit\":1}")]
+    [InlineData("{\"schemaVersion\":3,\"parts\":[],\"cutPattern\":\"diagonal\"}")]
+    [InlineData("{\"schemaVersion\":3,\"parts\":[],\"cutPattern\":1}")]
     [InlineData("{\"schemaVersion\":3,\"parts\":[],\"inventory\":{}}")]
     public async Task InvalidProjectFilesAreRejectedWithoutOverwrite(string text)
     {
@@ -307,10 +316,11 @@ public sealed class PersistenceTests : IDisposable
     [InlineData("null")]
     [InlineData("{}")]
     [InlineData("{\"schemaVersion\":1,\"panels\":[],\"scraps\":[]}")]
-    [InlineData("{\"schemaVersion\":3,\"panels\":[],\"scraps\":[]}")]
-    [InlineData("{\"schemaVersion\":2,\"panels\":null,\"scraps\":[]}")]
-    [InlineData("{\"schemaVersion\":2,\"panels\":[null],\"scraps\":[]}")]
-    [InlineData("{\"schemaVersion\":2,\"panels\":[],\"scraps\":[null]}")]
+    [InlineData("{\"schemaVersion\":2,\"panels\":[],\"scraps\":[]}")]
+    [InlineData("{\"schemaVersion\":4,\"panels\":[],\"scraps\":[]}")]
+    [InlineData("{\"schemaVersion\":3,\"panels\":null,\"scraps\":[]}")]
+    [InlineData("{\"schemaVersion\":3,\"panels\":[null],\"scraps\":[]}")]
+    [InlineData("{\"schemaVersion\":3,\"panels\":[],\"scraps\":[null]}")]
     public async Task InvalidInventoryFilesAreRejectedWithoutOverwrite(string text)
     {
         await WriteJsonAsync(InventoryPath, text);
@@ -342,7 +352,11 @@ public sealed class PersistenceTests : IDisposable
     [InlineData("label", "null")]
     [InlineData("quantity", "-1")]
     [InlineData("costPerUnit", "-0.01")]
-    [InlineData("edgeTrim", "-1")]
+    [InlineData("trimTop", "-1")]
+    [InlineData("trimBottom", "-1")]
+    [InlineData("trimLeft", "-0.5")]
+    [InlineData("trimRight", "-1")]
+    [InlineData("edgeTrim", "0")]
     [InlineData("unknownField", "true")]
     [InlineData("id", "\"00000000-0000-0000-0000-000000000000\"")]
     public async Task InvalidStockValuesCannotBypassModelValidation(string fieldName, string value)
@@ -354,6 +368,19 @@ public sealed class PersistenceTests : IDisposable
         await File.WriteAllTextAsync(InventoryPath, text);
         await Assert.ThrowsAsync<InvalidDataException>(() => new InventoryStore(InventoryPath).LoadAsync());
         Assert.Equal(text, await File.ReadAllTextAsync(InventoryPath));
+    }
+
+    [Theory]
+    [InlineData("trimTop")]
+    [InlineData("edgeTrim")]
+    [InlineData("originPanelId")]
+    public async Task ScrapsRejectTrimAndOriginFields(string fieldName)
+    {
+        await new InventoryStore(InventoryPath).SaveAsync(CreateInventory());
+        var document = JsonNode.Parse(await File.ReadAllTextAsync(InventoryPath))!;
+        document["scraps"]![0]![fieldName] = fieldName == "originPanelId" ? JsonValue.Create(Guid.NewGuid()) : JsonValue.Create(0);
+        await File.WriteAllTextAsync(InventoryPath, document.ToJsonString());
+        await Assert.ThrowsAsync<InvalidDataException>(() => new InventoryStore(InventoryPath).LoadAsync());
     }
 
     [Fact]
@@ -487,9 +514,15 @@ public sealed class PersistenceTests : IDisposable
         Assert.Equal(Part.DefaultColor, loadedPart.Color);
         await new InventoryStore(InventoryPath).SaveAsync(CreateInventory());
         var inventory = JsonNode.Parse(await File.ReadAllTextAsync(InventoryPath))!;
-        inventory["scraps"]![0]!.AsObject().Remove("originPanelId");
+        var scrap = inventory["scraps"]![0]!.AsObject();
+        foreach (var name in new[] { "quantity", "label", "priority", "costPerUnit" })
+            scrap.Remove(name);
         await File.WriteAllTextAsync(InventoryPath, inventory.ToJsonString());
-        Assert.Null((await new InventoryStore(InventoryPath).LoadAsync()).Scraps[0].OriginPanelId);
+        var loadedScrap = (await new InventoryStore(InventoryPath).LoadAsync()).Scraps[0];
+        Assert.Equal(1, loadedScrap.Quantity);
+        Assert.Equal(string.Empty, loadedScrap.Label);
+        Assert.Equal(0, loadedScrap.Priority);
+        Assert.Equal(0m, loadedScrap.CostPerUnit);
     }
 
     [Fact]
@@ -538,12 +571,11 @@ public sealed class PersistenceTests : IDisposable
         var inventory = new Inventory();
         inventory.Panels.Add(new Panel(2400, 1200, TestMaterials.Id("Oak", 18), 2)
         {
-            Label = "Panel A", Priority = 3, EdgeTrim = 10, CostPerUnit = 125.45m
+            Label = "Panel A", Priority = 3, TrimTop = 5, TrimBottom = 10, TrimLeft = 15, TrimRight = 20, CostPerUnit = 125.45m
         });
         inventory.Scraps.Add(new Scrap(400, 300, TestMaterials.Id("Oak", 18), 0)
         {
-            Label = "Offcut B", Priority = -2, EdgeTrim = 200, CostPerUnit = 12.34m,
-            OriginPanelId = Guid.NewGuid()
+            Label = "Offcut B", Priority = -2, CostPerUnit = 12.34m
         });
         inventory.Scraps.Add(new Scrap(200, 200, TestMaterials.Id("Birch", 12)));
         return inventory;
@@ -563,7 +595,7 @@ public sealed class PersistenceTests : IDisposable
 
     private static Project CreateProject()
     {
-        var project = new Project { Unit = LengthUnit.Inches, BladeId = TestMaterials.BladeId(3.2) };
+        var project = new Project { Unit = LengthUnit.Inches, BladeId = TestMaterials.BladeId(3.2), CutPattern = CutPattern.ByWidth };
         project.Parts.Add(new Part(254, 127, TestMaterials.Id("Oak"), 3)
         {
             Label = "Shelf, left", Color = "#AABBCC"

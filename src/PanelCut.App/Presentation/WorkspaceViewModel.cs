@@ -228,9 +228,9 @@ public sealed class WorkspaceViewModel
             Scraps.Add(CreateStockRow(true, scrap));
     }
 
-    public bool CommitProject(Guid? bladeId, LengthUnit unit)
+    public bool CommitProject(Guid? bladeId, LengthUnit unit, CutPattern? pattern = null)
     {
-        var candidate = new Project { BladeId = bladeId, Unit = unit };
+        var candidate = new Project { BladeId = bladeId, Unit = unit, CutPattern = pattern ?? Project.CutPattern };
         candidate.Parts.AddRange(Parts.Select(row => row.ToModel()));
         candidate.Validate();
         if (Same(Project, candidate))
@@ -270,7 +270,7 @@ public sealed class WorkspaceViewModel
     {
         try
         {
-            var candidate = new Project { BladeId = bladeId, Unit = unit };
+            var candidate = new Project { BladeId = bladeId, Unit = unit, CutPattern = Project.CutPattern };
             candidate.Parts.AddRange(Parts.Select(row => row.ToModel()));
             return !Same(Project, candidate);
         }

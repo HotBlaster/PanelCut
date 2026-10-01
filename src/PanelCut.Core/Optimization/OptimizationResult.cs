@@ -15,11 +15,11 @@ public sealed record LayoutRectangle(double X, double Y, double Width, double He
 public sealed record StockSnapshot(
     Guid Id, StockKind Kind, double Width, double Height, double Thickness,
     string Material, int Quantity, int Priority, decimal CostPerUnit,
-    double EdgeTrim, Guid? OriginPanelId,
+    double TrimTop, double TrimBottom, double TrimLeft, double TrimRight,
     Guid MaterialId, string MaterialType, string Label)
 {
-    public double UsableWidth => Width - EdgeTrim - EdgeTrim;
-    public double UsableHeight => Height - EdgeTrim - EdgeTrim;
+    public double UsableWidth => Width - TrimLeft - TrimRight;
+    public double UsableHeight => Height - TrimTop - TrimBottom;
 }
 
 public sealed record PartSnapshot(

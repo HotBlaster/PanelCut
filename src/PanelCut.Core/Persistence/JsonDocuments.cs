@@ -6,7 +6,7 @@ namespace PanelCut.Core.Persistence;
 internal sealed class InventoryDocument
 {
     [JsonRequired] public int SchemaVersion { get; set; }
-    [JsonRequired] public List<StockDocument> Panels { get; set; } = null!;
+    [JsonRequired] public List<PanelDocument> Panels { get; set; } = null!;
     [JsonRequired] public List<ScrapDocument> Scraps { get; set; } = null!;
 
     public InventoryDocument() { }
@@ -14,14 +14,14 @@ internal sealed class InventoryDocument
     internal InventoryDocument(Inventory inventory)
     {
         inventory.Validate();
-        SchemaVersion = 2;
-        Panels = inventory.Panels.Select(panel => new StockDocument(panel)).ToList();
+        SchemaVersion = 3;
+        Panels = inventory.Panels.Select(panel => new PanelDocument(panel)).ToList();
         Scraps = inventory.Scraps.Select(scrap => new ScrapDocument(scrap)).ToList();
     }
 
     internal Inventory ToModel()
     {
-        if (SchemaVersion != 2)
+        if (SchemaVersion != 3)
             throw new InvalidDataException($"Unsupported inventory schema version: {SchemaVersion}.");
         ArgumentNullException.ThrowIfNull(Panels);
         ArgumentNullException.ThrowIfNull(Scraps);
@@ -41,7 +41,7 @@ internal sealed class InventoryDocument
     }
 }
 
-internal class StockDocument
+internal abstract class StockDocument
 {
     [JsonRequired] public Guid Id { get; set; }
     [JsonRequired] public double Width { get; set; }
@@ -51,11 +51,10 @@ internal class StockDocument
     public int Quantity { get; set; } = 1;
     public int Priority { get; set; }
     public decimal CostPerUnit { get; set; }
-    public double EdgeTrim { get; set; }
 
-    public StockDocument() { }
+    protected StockDocument() { }
 
-    internal StockDocument(IStockItem stock)
+    protected StockDocument(IStockItem stock)
     {
         Id = stock.Id;
         Width = stock.Width;
@@ -65,7 +64,6 @@ internal class StockDocument
         Quantity = stock.Quantity;
         Priority = stock.Priority;
         CostPerUnit = stock.CostPerUnit;
-        EdgeTrim = stock.EdgeTrim;
     }
 
     protected void ApplyTo(IStockItem stock)
@@ -74,12 +72,32 @@ internal class StockDocument
         stock.Label = Label;
         stock.Priority = Priority;
         stock.CostPerUnit = CostPerUnit;
-        stock.EdgeTrim = EdgeTrim;
+    }
+}
+
+internal sealed class PanelDocument : StockDocument
+{
+    public double TrimTop { get; set; }
+    public double TrimBottom { get; set; }
+    public double TrimLeft { get; set; }
+    public double TrimRight { get; set; }
+
+    public PanelDocument() { }
+
+    internal PanelDocument(Panel panel) : base(panel)
+    {
+        TrimTop = panel.TrimTop;
+        TrimBottom = panel.TrimBottom;
+        TrimLeft = panel.TrimLeft;
+        TrimRight = panel.TrimRight;
     }
 
     internal Panel ToPanel()
     {
-        var panel = new Panel(Width, Height, MaterialId, Quantity);
+        var panel = new Panel(Width, Height, MaterialId, Quantity)
+        {
+            TrimTop = TrimTop, TrimBottom = TrimBottom, TrimLeft = TrimLeft, TrimRight = TrimRight
+        };
         ApplyTo(panel);
         return panel;
     }
@@ -87,18 +105,13 @@ internal class StockDocument
 
 internal sealed class ScrapDocument : StockDocument
 {
-    public Guid? OriginPanelId { get; set; }
-
     public ScrapDocument() { }
 
-    internal ScrapDocument(Scrap scrap) : base(scrap)
-    {
-        OriginPanelId = scrap.OriginPanelId;
-    }
+    internal ScrapDocument(Scrap scrap) : base(scrap) { }
 
     internal Scrap ToScrap()
     {
-        var scrap = new Scrap(Width, Height, MaterialId, Quantity) { OriginPanelId = OriginPanelId };
+        var scrap = new Scrap(Width, Height, MaterialId, Quantity);
         ApplyTo(scrap);
         return scrap;
     }
@@ -110,6 +123,7 @@ internal sealed class ProjectDocument
     [JsonRequired] public List<PartDocument> Parts { get; set; } = null!;
     public Guid? BladeId { get; set; }
     public LengthUnit Unit { get; set; } = LengthUnit.Millimetres;
+    public CutPattern CutPattern { get; set; } = CutPattern.Optimal;
 
     public ProjectDocument() { }
 
@@ -120,6 +134,7 @@ internal sealed class ProjectDocument
         Parts = project.Parts.Select(part => new PartDocument(part)).ToList();
         BladeId = project.BladeId;
         Unit = project.Unit;
+        CutPattern = project.CutPattern;
     }
 
     internal Project ToModel()
@@ -127,7 +142,7 @@ internal sealed class ProjectDocument
         if (SchemaVersion != 3)
             throw new InvalidDataException($"Unsupported project schema version: {SchemaVersion}.");
         ArgumentNullException.ThrowIfNull(Parts);
-        var project = new Project { BladeId = BladeId, Unit = Unit };
+        var project = new Project { BladeId = BladeId, Unit = Unit, CutPattern = CutPattern };
         foreach (var document in Parts)
         {
             ArgumentNullException.ThrowIfNull(document);

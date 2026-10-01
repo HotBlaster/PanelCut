@@ -48,6 +48,9 @@ public partial class MainWindow : Window
         ConfigureGrids();
         UnitInput.ItemsSource = new[] { "mm", "inch" };
         UnitInput.SelectedIndex = 0;
+        // Order matches CutPattern values.
+        CutPatternInput.ItemsSource = new[] { "Optimal", "By length", "By width", "Strips by length", "Strips by width", "Fewest cuts" };
+        CutPatternInput.SelectedIndex = 0;
         updating = false;
         InventoryLocation.Text = workspace.InventoryPath;
         InventoryLocation.ToolTip = workspace.InventoryPath;
@@ -99,16 +102,28 @@ public partial class MainWindow : Window
             AddText(grid, "Qty", "Quantity", 60, numeric: true);
             AddText(grid, "Priority", "Priority", 75, numeric: true);
             AddText(grid, "Cost / unit", "CostPerUnit", 100, numeric: true);
-            AddText(grid, "Trim mm", "EdgeTrim", 85, numeric: true);
+            if (grid == PanelsGrid)
+            {
+                AddText(grid, "Trim top mm", "TrimTop", 95, numeric: true);
+                AddText(grid, "Trim bottom mm", "TrimBottom", 115, numeric: true);
+                AddText(grid, "Trim left mm", "TrimLeft", 95, numeric: true);
+                AddText(grid, "Trim right mm", "TrimRight", 105, numeric: true);
+            }
             AddText(grid, "Status", "Usability", 110, true);
         }
-        AddText(ScrapsGrid, "Origin panel ID", "OriginPanelId", 280);
         AddText(BrandsGrid, "Name", "Name", 220);
         AddText(UnplacedGrid, "Label", "Part.Label", 180, true);
         AddText(UnplacedGrid, "Material", "Part.Material", 130, true);
         AddText(UnplacedGrid, "Remaining", "Quantity", 100, true, numeric: true);
         AddText(UnplacedGrid, "Type", "Part.MaterialType", 130, true);
         AddText(UnplacedGrid, "Thickness mm", "Part.Thickness", 110, true, numeric: true);
+        foreach (var grid in new[] { PartsGrid, PanelsGrid, ScrapsGrid, MaterialsGrid, BladesGrid, BrandsGrid })
+            grid.Columns.Insert(0, new DataGridTemplateColumn
+            {
+                Width = grid == MaterialsGrid ? 34 : 62, IsReadOnly = true,
+                CanUserSort = false, CanUserResize = false, CanUserReorder = false,
+                CellTemplate = (DataTemplate)FindResource(grid == MaterialsGrid ? "RowAddTemplate" : "RowActionsTemplate")
+            });
     }
 
     private void MaterialTypeDropDownClosed(object sender, EventArgs args) =>
@@ -715,13 +730,14 @@ public partial class MainWindow : Window
         BeginRow(PartsGrid, row);
         RefreshState();
     }
-    private void DeletePartClick(object sender, RoutedEventArgs args)
+    private void DeletePartClick(object sender, RoutedEventArgs args) =>
+        DeleteParts(PartsGrid.SelectedItems.OfType<PartRow>().ToArray());
+    private void DeleteParts(IReadOnlyCollection<PartRow> rows)
     {
-        var selected = PartsGrid.SelectedItems.OfType<PartRow>().ToArray();
-        if (busy || !projectSave.IsCompleted || selected.Length == 0)
+        if (busy || !projectSave.IsCompleted || rows.Count == 0)
             return;
         CancelGrid(PartsGrid);
-        foreach (var row in selected)
+        foreach (var row in rows)
             workspace.Parts.Remove(row);
         CommitProject();
     }
@@ -842,13 +858,95 @@ public partial class MainWindow : Window
         grid.CancelEdit(DataGridEditingUnit.Row);
         updating = false;
     }
+
+    private void RowAddClick(object sender, RoutedEventArgs args)
+    {
+        var grid = (DataGrid)((FrameworkElement)sender).Tag;
+        if (grid == PartsGrid)
+            AddPartClick(sender, args);
+        else if (grid == PanelsGrid)
+            AddPanelClick(sender, args);
+        else if (grid == ScrapsGrid)
+            AddScrapClick(sender, args);
+        else if (grid == MaterialsGrid)
+            AddMaterialClick(sender, args);
+        else if (grid == BladesGrid)
+            AddBladeClick(sender, args);
+        else if (grid == BrandsGrid)
+            AddBrandClick(sender, args);
+    }
+
+    private async void RowRemoveClick(object sender, RoutedEventArgs args)
+    {
+        var element = (FrameworkElement)sender;
+        var grid = (DataGrid)element.Tag;
+        switch (element.DataContext)
+        {
+            case PartRow part:
+                DeleteParts([part]);
+                break;
+            case StockRow stock:
+                await RemoveStockRowAsync(grid, stock);
+                break;
+            case BladeRow blade:
+                await RemoveBladeRowAsync(grid, blade, workspace.Blades.Blades.Any(saved => saved.Id == blade.Id),
+                    () => workspace.BladeRows.Remove(blade), () => DeleteBladesAsync([blade.Id]));
+                break;
+            case BrandRow brand:
+                await RemoveBladeRowAsync(grid, brand, workspace.Blades.Brands.Any(saved => saved.Id == brand.Id),
+                    () => workspace.BrandRows.Remove(brand), () => DeleteBrandsAsync([brand.Id]));
+                break;
+        }
+    }
+
+    private async Task RemoveStockRowAsync(DataGrid grid, StockRow row)
+    {
+        if (busy || !stockSave.IsCompleted)
+            return;
+        if (row.IsEditing)
+        {
+            CancelGrid(grid);
+            if (pendingStockCandidate is null)
+                stockPending = false;
+        }
+        if (!await ReadyAsync() || !workspace.InventoryReady)
+            return;
+        if (workspace.Inventory.Panels.Any(panel => panel.Id == row.Id) || workspace.Inventory.Scraps.Any(scrap => scrap.Id == row.Id))
+            await DeleteStockAsync([row.Id]);
+        else
+        {
+            (row.IsScrap ? workspace.Scraps : workspace.Panels).Remove(row);
+            RefreshState();
+        }
+    }
+
+    private async Task RemoveBladeRowAsync(DataGrid grid, EditableRow row, bool saved, Action removeUnsaved, Func<Task> deleteSaved)
+    {
+        if (busy || !bladeSave.IsCompleted)
+            return;
+        if (row.IsEditing)
+        {
+            CancelGrid(grid);
+            if (pendingBladeCandidate is null)
+                bladePending = false;
+        }
+        if (!await ReadyAsync() || !workspace.BladesReady)
+            return;
+        if (saved)
+            await deleteSaved();
+        else
+        {
+            removeUnsaved();
+            RefreshState();
+        }
+    }
     private static void BeginRow(DataGrid grid, object row)
     {
         Window.GetWindow(grid)?.UpdateLayout();
         grid.SelectedItem = row;
         grid.ScrollIntoView(row);
         grid.UpdateLayout();
-        grid.CurrentCell = new DataGridCellInfo(row, grid.Columns[0]);
+        grid.CurrentCell = new DataGridCellInfo(row, grid.Columns.First(column => !column.IsReadOnly));
         grid.Focus();
         grid.BeginEdit();
     }
@@ -868,6 +966,22 @@ public partial class MainWindow : Window
             ClearLayout();
         workspace.RefreshPartRows();
         RefreshProjectControls();
+    }
+
+    private void CutPatternChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (updating || CutPatternInput.SelectedIndex < 0)
+            return;
+        if (!CommitProject())
+        {
+            updating = true;
+            CutPatternInput.SelectedIndex = (int)workspace.Project.CutPattern;
+            updating = false;
+            return;
+        }
+        if (workspace.CommitProject(workspace.Project.BladeId, workspace.Project.Unit, (CutPattern)CutPatternInput.SelectedIndex))
+            ClearLayout();
+        RefreshState();
     }
 
     private async void NewProjectClick(object sender, RoutedEventArgs args) => await NewProjectAsync();
@@ -1115,9 +1229,10 @@ public partial class MainWindow : Window
     {
         updating = true;
         UnitInput.SelectedIndex = workspace.Project.Unit == LengthUnit.Millimetres ? 0 : 1;
-        PartsGrid.Columns[1].Header = $"Width ({UnitLabel})";
-        PartsGrid.Columns[2].Header = $"Height ({UnitLabel})";
-        PartsGrid.Columns[5].Header = $"Thickness ({UnitLabel})";
+        CutPatternInput.SelectedIndex = (int)workspace.Project.CutPattern;
+        PartsGrid.Columns[2].Header = $"Width ({UnitLabel})";
+        PartsGrid.Columns[3].Header = $"Height ({UnitLabel})";
+        PartsGrid.Columns[6].Header = $"Thickness ({UnitLabel})";
         updating = false;
         RefreshBladeSelector();
         RefreshState();

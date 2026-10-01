@@ -38,7 +38,7 @@ public sealed class SheetDrawing : FrameworkElement
         var outer = new Rect(left, top, stock.Width * scale, stock.Height * scale);
         var outline = new Pen(Brush("#354945"), 1);
         context.DrawRectangle(Hatch("#E7D7C2", "#AD8960"), outline, outer);
-        var usable = Map(new LayoutRectangle(stock.EdgeTrim, stock.EdgeTrim, stock.UsableWidth, stock.UsableHeight), scale, left, top);
+        var usable = Map(new LayoutRectangle(stock.TrimLeft, stock.TrimTop, stock.UsableWidth, stock.UsableHeight), scale, left, top);
         context.DrawRectangle(Brushes.White, outline, usable);
         Text(context, $"{stock.Label}   |   {Length(stock.Width)} x {Length(stock.Height)} {UnitName}   |   {stock.Material} / {stock.MaterialType} / {Length(stock.Thickness)} {UnitName}",
             new Rect(left, Math.Max(2, top - 30), outer.Width, 24), 13, false);
@@ -72,7 +72,11 @@ public sealed class SheetDrawing : FrameworkElement
         base.OnMouseMove(args);
         var point = args.GetPosition(this);
         var match = hitAreas.LastOrDefault(area => area.Bounds.Contains(point));
-        var text = match.Text ?? $"{sheet.Stock.Label}\n{sheet.Stock.Material} / {sheet.Stock.MaterialType} / {Length(sheet.Stock.Thickness)} {UnitName}\nEdge trim: {Length(sheet.Stock.EdgeTrim)} {UnitName}";
+        var stock = sheet.Stock;
+        var trim = stock.Kind == StockKind.Panel
+            ? $"\nTrim top/bottom/left/right: {Length(stock.TrimTop)} / {Length(stock.TrimBottom)} / {Length(stock.TrimLeft)} / {Length(stock.TrimRight)} {UnitName}"
+            : "";
+        var text = match.Text ?? $"{stock.Label}\n{stock.Material} / {stock.MaterialType} / {Length(stock.Thickness)} {UnitName}{trim}";
         if (!Equals(ToolTip, text))
             ToolTip = text;
     }

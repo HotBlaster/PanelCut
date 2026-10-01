@@ -122,6 +122,81 @@ public class OptimizationTests
     }
 
     [Theory]
+    [InlineData(CutPattern.ByLength, 200, 100, CutAxis.Horizontal)]
+    [InlineData(CutPattern.ByLength, 100, 200, CutAxis.Vertical)]
+    [InlineData(CutPattern.ByWidth, 200, 100, CutAxis.Vertical)]
+    [InlineData(CutPattern.ByWidth, 100, 200, CutAxis.Horizontal)]
+    [InlineData(CutPattern.StripsByLength, 200, 100, CutAxis.Horizontal)]
+    [InlineData(CutPattern.StripsByLength, 100, 200, CutAxis.Vertical)]
+    [InlineData(CutPattern.StripsByWidth, 200, 100, CutAxis.Vertical)]
+    [InlineData(CutPattern.StripsByWidth, 100, 200, CutAxis.Horizontal)]
+    public void StripPatternsStartEveryPlacementWithTheSameAxis(CutPattern pattern, double width, double height, CutAxis axis)
+    {
+        var project = Job(new Part(30, 20, TestMaterials.Id("Oak"), 12), 1);
+        project.Parts.Add(new Part(45, 15, TestMaterials.Id("Oak"), 5));
+        project.CutPattern = pattern;
+        var result = new TestOptimizer().OptimizePanels(Stock(new Panel(width, height, TestMaterials.Id("Oak", 18))), project);
+        var sheet = Assert.Single(result.Sheets);
+        Assert.Equal(axis, sheet.Cuts[0].Axis);
+        // No cross cut may run through the whole sheet: strips are only subdivided.
+        Assert.All(sheet.Cuts.Where(cut => cut.Axis != axis),
+            cut => Assert.True(axis == CutAxis.Horizontal ? cut.Region.Height < height : cut.Region.Width < width));
+        AssertGeometry(result);
+    }
+
+    [Fact]
+    public void OptimalPatternIsTheDefault()
+    {
+        Assert.Equal(CutPattern.Optimal, new Project().CutPattern);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Project().CutPattern = (CutPattern)99);
+    }
+
+    [Fact]
+    public void OptimalSearchIsAtLeastAsGoodAsEveryRestrictedPattern()
+    {
+        foreach (var seed in new[] { 3, 17, 42 })
+        {
+            var optimal = MixedJob(seed, CutPattern.Optimal);
+            foreach (var pattern in Enum.GetValues<CutPattern>())
+            {
+                var other = MixedJob(seed, pattern);
+                AssertGeometry(other);
+                var (best, sheet) = (optimal.Sheets[0], other.Sheets[0]);
+                Assert.True(best.PartArea >= sheet.PartArea);
+                if (best.PartArea == sheet.PartArea && pattern != CutPattern.FewestCuts)
+                    Assert.True(LargestScrap(best) >= LargestScrap(sheet));
+            }
+        }
+    }
+
+    [Fact]
+    public void FewestCutsNeverCutsMoreThanOptimalForTheSameParts()
+    {
+        foreach (var seed in new[] { 3, 17, 42 })
+        {
+            var optimal = MixedJob(seed, CutPattern.Optimal).Sheets[0];
+            var fewest = MixedJob(seed, CutPattern.FewestCuts).Sheets[0];
+            Assert.Equal(optimal.PartArea, fewest.PartArea);
+            Assert.True(fewest.Cuts.Count <= optimal.Cuts.Count);
+        }
+    }
+
+    [Fact]
+    public void StripsGroupEqualLengthPartsAndKeepOneFullOffcut()
+    {
+        var project = Job(new Part(500, 80, TestMaterials.Id("Oak"), 3));
+        project.Parts.Add(new Part(300, 60, TestMaterials.Id("Oak"), 2));
+        project.CutPattern = CutPattern.StripsByWidth;
+        var result = new TestOptimizer().OptimizePanels(Stock(new Panel(1000, 600, TestMaterials.Id("Oak", 18))), project);
+        var sheet = Assert.Single(result.Sheets);
+        Assert.True(result.IsComplete);
+        var longParts = sheet.Placements.Where(placement => placement.Part.Width == 500).ToArray();
+        Assert.Single(longParts.Select(placement => placement.Bounds.Y).Distinct());
+        Assert.Contains(sheet.RemainingScraps, scrap => scrap.Height == 600 && scrap.Right == 1000);
+        AssertGeometry(result);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void PartsRotateToFitBothStockKinds(bool useScrap)
@@ -137,30 +212,45 @@ public class OptimizationTests
         AssertGeometry(result);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void TrimOffsetsPlacementsAndReducesUsableArea(bool useScrap)
+    [Fact]
+    public void PanelEdgeTrimsOffsetPlacementsAndReduceUsableArea()
     {
-        IStockItem item = useScrap ? new Scrap(120, 100, TestMaterials.Id("Oak", 18)) : new Panel(120, 100, TestMaterials.Id("Oak", 18));
-        item.EdgeTrim = 10;
+        var panel = new Panel(120, 100, TestMaterials.Id("Oak", 18)) { TrimTop = 5, TrimBottom = 15, TrimLeft = 12, TrimRight = 8 };
         var part = new Part(100, 80, TestMaterials.Id("Oak"));
         var optimizer = new TestOptimizer();
-        var result = optimizer.OptimizePanels(Stock(item), Job(part));
-        Assert.Equal(new LayoutRectangle(10, 10, 100, 80), Assert.Single(result.Sheets[0].Placements).Bounds);
+        var result = optimizer.OptimizePanels(Stock(panel), Job(part));
+        var sheet = Assert.Single(result.Sheets);
+        Assert.Equal((5d, 15d, 12d, 8d), (sheet.Stock.TrimTop, sheet.Stock.TrimBottom, sheet.Stock.TrimLeft, sheet.Stock.TrimRight));
+        Assert.Equal(new LayoutRectangle(12, 5, 100, 80), Assert.Single(sheet.Placements).Bounds);
         AssertGeometry(result);
         part.Width = 101;
-        Assert.Empty(optimizer.OptimizePanels(Stock(item), Job(part)).Sheets);
+        Assert.Empty(optimizer.OptimizePanels(Stock(panel), Job(part)).Sheets);
+        part.Width = 100;
+        part.Height = 81;
+        Assert.Empty(optimizer.OptimizePanels(Stock(panel), Job(part)).Sheets);
+    }
+
+    [Fact]
+    public void ScrapsHaveNoTrim()
+    {
+        var scrap = new Scrap(120, 100, TestMaterials.Id("Oak", 18));
+        var result = new TestOptimizer().OptimizePanels(Stock(scrap), Job(new Part(120, 100, TestMaterials.Id("Oak"))));
+        var sheet = Assert.Single(result.Sheets);
+        Assert.Equal((0d, 0d, 0d, 0d), (sheet.Stock.TrimTop, sheet.Stock.TrimBottom, sheet.Stock.TrimLeft, sheet.Stock.TrimRight));
+        Assert.Equal(new LayoutRectangle(0, 0, 120, 100), Assert.Single(sheet.Placements).Bounds);
+        AssertGeometry(result);
     }
 
     [Theory]
     [InlineData(80, 120, 40)]
     [InlineData(120, 80, 40)]
     [InlineData(80, 80, 50)]
-    public void FullyTrimmedStockOfBothKindsIsSkipped(double width, double height, double trim)
+    public void FullyTrimmedPanelsAreSkipped(double width, double height, double trim)
     {
-        var inventory = Stock(new Panel(width, height, TestMaterials.Id("Oak", 18)) { EdgeTrim = trim, Priority = -10 },
-            new Scrap(width, height, TestMaterials.Id("Oak", 18)) { EdgeTrim = trim, Priority = -20 },
+        var inventory = Stock(new Panel(width, height, TestMaterials.Id("Oak", 18))
+            {
+                TrimTop = trim, TrimBottom = trim, TrimLeft = trim, TrimRight = trim, Priority = -10
+            },
             new Panel(100, 100, TestMaterials.Id("Oak", 18)) { Priority = 1 });
         var result = new TestOptimizer().OptimizePanels(inventory, Job(new Part(10, 10, TestMaterials.Id("Oak"))));
         Assert.Equal(inventory.Panels[1].Id, Assert.Single(result.Sheets).Stock.Id);
@@ -242,7 +332,10 @@ public class OptimizationTests
     [Fact]
     public void WasteIncludesTrimKerfAndRemainingScrapOnOpenedSheetsOnly()
     {
-        var stock = new Panel(120, 100, TestMaterials.Id("Oak", 18), 10) { EdgeTrim = 10, CostPerUnit = 12.34m };
+        var stock = new Panel(120, 100, TestMaterials.Id("Oak", 18), 10)
+        {
+            TrimTop = 10, TrimBottom = 10, TrimLeft = 10, TrimRight = 10, CostPerUnit = 12.34m
+        };
         var result = new TestOptimizer().OptimizePanels(Stock(stock), Job(new Part(50, 80, TestMaterials.Id("Oak")), 2));
         var sheet = Assert.Single(result.Sheets);
         Assert.Equal(12000, result.TotalStockArea);
@@ -280,7 +373,7 @@ public class OptimizationTests
     {
         var stock = new Scrap(80, 40, TestMaterials.Id("Oak", 18), 2)
         {
-            OriginPanelId = Guid.NewGuid(), Priority = -2, CostPerUnit = 10m
+            Priority = -2, CostPerUnit = 10m
         };
         var part = new Part(40, 80, TestMaterials.Id("Oak"), 3)
         {
@@ -300,7 +393,6 @@ public class OptimizationTests
         Assert.Equal(40, placed.Part.Width);
         Assert.Equal(80, placed.Part.Height);
         Assert.Equal("#123456", placed.Part.Color);
-        Assert.Equal(stock.OriginPanelId, result.Sheets[0].Stock.OriginPanelId);
         stock.Quantity = 0;
         stock.MaterialId = TestMaterials.Id("Birch");
         part.Label = "Changed";
@@ -372,8 +464,8 @@ public class OptimizationTests
         var random = new Random(731);
         for (var iteration = 0; iteration < 12; iteration++)
         {
-            var inventory = Stock(new Panel(200, 150, TestMaterials.Id("Oak", 18), 3) { EdgeTrim = 5 },
-                new Scrap(120, 90, TestMaterials.Id("Oak", 18), 2) { EdgeTrim = 2, Priority = -1 },
+            var inventory = Stock(new Panel(200, 150, TestMaterials.Id("Oak", 18), 3) { TrimTop = 5, TrimBottom = 3, TrimLeft = 7, TrimRight = 2 },
+                new Scrap(120, 90, TestMaterials.Id("Oak", 18), 2) { Priority = -1 },
                 new Panel(200, 150, TestMaterials.Id("Birch", 18), 2));
             var project = TestMaterials.Project(kerf);
             for (var index = 0; index < 18; index++)
@@ -394,6 +486,19 @@ public class OptimizationTests
             Assert.Equal(result.Sheets.Select(sheet => sheet.Stock.Priority).Order(), result.Sheets.Select(sheet => sheet.Stock.Priority));
         }
     }
+
+    private static OptimizationResult MixedJob(int seed, CutPattern pattern)
+    {
+        var random = new Random(seed);
+        var project = TestMaterials.Project(3.2);
+        project.CutPattern = pattern;
+        for (var index = 0; index < 10; index++)
+            project.Parts.Add(new Part(random.Next(50, 600), random.Next(30, 300), TestMaterials.Id("Oak"), random.Next(1, 4)));
+        return new TestOptimizer().OptimizePanels(Stock(new Panel(1525, 1525, TestMaterials.Id("Oak", 18), 5)), project);
+    }
+
+    private static double LargestScrap(SheetLayout sheet) =>
+        sheet.RemainingScraps.Count == 0 ? 0 : sheet.RemainingScraps.Max(scrap => scrap.Area);
 
     private static Inventory Stock(params IStockItem[] items)
     {
@@ -421,7 +526,7 @@ public class OptimizationTests
         foreach (var sheet in result.Sheets)
         {
             var stock = sheet.Stock;
-            var leaves = new List<LayoutRectangle> { new(stock.EdgeTrim, stock.EdgeTrim, stock.UsableWidth, stock.UsableHeight) };
+            var leaves = new List<LayoutRectangle> { new(stock.TrimLeft, stock.TrimTop, stock.UsableWidth, stock.UsableHeight) };
             var kerfArea = 0.0;
             foreach (var cut in sheet.Cuts)
             {
@@ -447,9 +552,9 @@ public class OptimizationTests
                 Assert.Equal(stock.Thickness, placement.Part.Thickness);
                 Assert.Equal(placement.IsRotated ? placement.Part.Height : placement.Part.Width, rectangle.Width);
                 Assert.Equal(placement.IsRotated ? placement.Part.Width : placement.Part.Height, rectangle.Height);
-                Assert.True(rectangle.X >= stock.EdgeTrim - tolerance && rectangle.Y >= stock.EdgeTrim - tolerance);
-                Assert.True(rectangle.Right <= stock.Width - stock.EdgeTrim + tolerance);
-                Assert.True(rectangle.Bottom <= stock.Height - stock.EdgeTrim + tolerance);
+                Assert.True(rectangle.X >= stock.TrimLeft - tolerance && rectangle.Y >= stock.TrimTop - tolerance);
+                Assert.True(rectangle.Right <= stock.Width - stock.TrimRight + tolerance);
+                Assert.True(rectangle.Bottom <= stock.Height - stock.TrimBottom + tolerance);
                 var leaf = Assert.Single(leaves, leaf => SameRectangle(leaf, rectangle));
                 leaves.Remove(leaf);
             }

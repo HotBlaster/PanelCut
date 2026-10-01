@@ -37,9 +37,12 @@ public abstract class EditableRow : IEditableObject, INotifyPropertyChanged
 
     public void EndEdit() => backup = null;
 
+    public static string NormalizeDecimal(string text) =>
+        text.Replace(".", CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator, StringComparison.Ordinal);
+
     public static double Number(string text, string name)
     {
-        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out var value) || !double.IsFinite(value))
+        if (!double.TryParse(NormalizeDecimal(text), NumberStyles.Float, CultureInfo.CurrentCulture, out var value) || !double.IsFinite(value))
             throw new ArgumentException($"{name}: enter a finite number.");
         return value;
     }
@@ -240,8 +243,13 @@ public sealed class StockRow : MaterialBoundRow
         Quantity = stock.Quantity.ToString(CultureInfo.CurrentCulture);
         Priority = stock.Priority.ToString(CultureInfo.CurrentCulture);
         CostPerUnit = stock.CostPerUnit.ToString(CultureInfo.CurrentCulture);
-        EdgeTrim = Format(stock.EdgeTrim);
-        OriginPanelId = (stock as Scrap)?.OriginPanelId?.ToString() ?? "";
+        if (stock is Panel panel)
+        {
+            TrimTop = Format(panel.TrimTop);
+            TrimBottom = Format(panel.TrimBottom);
+            TrimLeft = Format(panel.TrimLeft);
+            TrimRight = Format(panel.TrimRight);
+        }
     }
 
     public bool IsScrap { get; }
@@ -257,8 +265,10 @@ public sealed class StockRow : MaterialBoundRow
     public string Quantity { get; set; } = "1";
     public string Priority { get; set; } = "0";
     public string CostPerUnit { get; set; } = "0";
-    public string EdgeTrim { get; set; } = "0";
-    public string OriginPanelId { get; set; } = "";
+    public string TrimTop { get; set; } = "0";
+    public string TrimBottom { get; set; } = "0";
+    public string TrimLeft { get; set; } = "0";
+    public string TrimRight { get; set; } = "0";
     public string Usability
     {
         get
@@ -277,16 +287,16 @@ public sealed class StockRow : MaterialBoundRow
         stock.Id = Id;
         stock.Label = Label;
         stock.Priority = Integer(Priority, "Priority");
-        if (!decimal.TryParse(CostPerUnit, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint | NumberStyles.AllowLeadingWhite | NumberStyles.AllowTrailingWhite,
+        if (!decimal.TryParse(NormalizeDecimal(CostPerUnit), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint | NumberStyles.AllowLeadingWhite | NumberStyles.AllowTrailingWhite,
             CultureInfo.CurrentCulture, out var cost))
             throw new ArgumentException("Cost per unit: enter a decimal number.");
         stock.CostPerUnit = cost;
-        stock.EdgeTrim = Number(EdgeTrim, "Edge trim");
-        if (stock is Scrap scrap && !string.IsNullOrWhiteSpace(OriginPanelId))
+        if (stock is Panel panel)
         {
-            if (!Guid.TryParse(OriginPanelId, out var origin))
-                throw new ArgumentException("Origin panel ID: enter a valid GUID or leave it empty.");
-            scrap.OriginPanelId = origin;
+            panel.TrimTop = Number(TrimTop, "Trim top");
+            panel.TrimBottom = Number(TrimBottom, "Trim bottom");
+            panel.TrimLeft = Number(TrimLeft, "Trim left");
+            panel.TrimRight = Number(TrimRight, "Trim right");
         }
         return stock;
     }

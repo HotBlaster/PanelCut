@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using PanelCut.App.Presentation;
 
 namespace PanelCut.App.Controls;
 
@@ -20,7 +21,7 @@ public sealed class PositiveNumberInput : TextBox
     }
 
     private static bool TryPositive(string text, out double value) =>
-        double.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.CurrentCulture, out value)
+        double.TryParse(EditableRow.NormalizeDecimal(text), NumberStyles.AllowDecimalPoint, CultureInfo.CurrentCulture, out value)
         && double.IsFinite(value) && value > 0;
 
     private string ReplaceSelection(string replacement) =>
@@ -28,7 +29,7 @@ public sealed class PositiveNumberInput : TextBox
 
     protected override void OnPreviewTextInput(TextCompositionEventArgs args)
     {
-        var candidate = ReplaceSelection(args.Text);
+        var candidate = EditableRow.NormalizeDecimal(ReplaceSelection(args.Text));
         var separator = CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator;
         var digits = candidate.Replace(separator, "", StringComparison.Ordinal);
         var firstSeparator = candidate.IndexOf(separator, StringComparison.Ordinal);

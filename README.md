@@ -342,7 +342,8 @@ Project example:
     }
   ],
   "bladeId": "9b8e7c6d-1a2b-4c3d-8e9f-0a1b2c3d4e5f",
-  "unit": "inches"
+  "unit": "inches",
+  "cutPattern": "byLength"
 }
 ```
 
@@ -350,7 +351,8 @@ Older project files containing `edgeBandTop/Bottom/Left/Right` or `groupTag`
 still load; those fields are ignored and not written on the next save.
 
 The example part is 254 x 127 mm, displayed as 10 x 5 inches. A project with
-`parts: []` and omitted settings loads with no blade selected and millimetres.
+`parts: []` and omitted settings loads with no blade selected, millimetres and
+the `optimal` cut pattern.
 
 ## Read-Only Optimization
 
@@ -392,13 +394,29 @@ concurrently while the optimizer takes its initial snapshot.
   part fits an empty unit.
 - All parts may rotate by 90 degrees. Both orientations are considered for
   non-square parts on panels and scraps.
-- Placements use the top-left corner of a selected free rectangle. Selection
-  minimizes unused rectangle area, then shorter-side remainder, then free-leaf
-  insertion order, with unrotated orientation preferred on a complete tie.
-- Every placement produces up to two guillotine cuts. Horizontal-first splitting
-  is selected when the remaining vertical distance is at least the remaining
-  horizontal distance; otherwise vertical-first splitting is used. Free leaves
-  are never merged, preserving the recorded guillotine cut sequence.
+- Each sheet is packed many times with different heuristics, and the best
+  layout is kept: most part area placed, then the largest remaining offcut,
+  then the fewest cuts (`FewestCuts` swaps the last two). Ties keep the first
+  heuristic, which reproduces the classic layout described below.
+- Heuristics combine a part order (area, longest side, perimeter or shortest
+  side, all descending), a fit rule and a split rule. Fit rules: best area
+  (minimizes unused rectangle area, then shorter-side remainder), best short
+  side, best long side, left-first and top-first (closest free rectangle to
+  the sheet origin). Unrotated orientation is preferred on a complete tie.
+- Every placement produces up to two guillotine cuts. The split order follows
+  the project's `CutPattern`:
+  - `Optimal` and `FewestCuts`: all split rules are tried — horizontal-first
+    when the remaining vertical distance is at least the horizontal one (the
+    classic rule), its reverse, larger or smaller biggest remnant, and fixed
+    horizontal or vertical.
+  - `ByLength`: always split parallel to the sheet's longer usable side first,
+    so the sheet is ripped into full-length strips that are then cross-cut.
+  - `ByWidth`: always split parallel to the sheet's shorter usable side first,
+    producing strips across the sheet.
+  - `StripsByLength` / `StripsByWidth`: same axis as `ByLength` / `ByWidth`,
+    but strips are filled in order from the sheet origin with equal-length
+    parts grouped, pushing waste into one large offcut.
+  Free leaves are never merged, preserving the recorded guillotine cut sequence.
 - Kerf is deducted at each separator. No kerf is required outside the usable
   bounds or when a part exactly reaches a free-region edge. A leftover narrower
   than kerf is entirely discarded, with the recorded blade strip clipped to
