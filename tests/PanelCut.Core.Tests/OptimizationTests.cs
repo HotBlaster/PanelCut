@@ -409,6 +409,28 @@ public class OptimizationTests
     }
 
     [Fact]
+    public void DisabledPartsAndStockAreIgnoredEvenWithUnknownMaterials()
+    {
+        var unknown = Guid.NewGuid();
+        var enabledPanel = new Panel(100, 100, TestMaterials.Id("Oak", 18));
+        var inventory = Stock(new Scrap(100, 100, TestMaterials.Id("Oak", 18)) { Priority = -5, IsEnabled = false },
+            new Panel(100, 100, unknown) { IsEnabled = false }, enabledPanel);
+        var enabled = new Part(50, 50, TestMaterials.Id("Oak"));
+        var project = Job(enabled);
+        project.Parts.Add(new Part(40, 40, TestMaterials.Id("Oak"), 3) { IsEnabled = false });
+        project.Parts.Add(new Part(40, 40, unknown) { IsEnabled = false });
+
+        var result = new TestOptimizer().OptimizePanels(inventory, project);
+
+        Assert.True(result.IsComplete);
+        var sheet = Assert.Single(result.Sheets);
+        Assert.Equal(enabledPanel.Id, sheet.Stock.Id);
+        Assert.Equal(enabled.Id, Assert.Single(sheet.Placements).Part.Id);
+        Assert.True(new Part(1, 1, Guid.NewGuid()).IsEnabled);
+        Assert.True(new Scrap(1, 1, Guid.NewGuid()).IsEnabled);
+    }
+
+    [Fact]
     public void RepeatedRunsAreDeterministicAndUnitDoesNotChangeGeometry()
     {
         var optimizer = new TestOptimizer();

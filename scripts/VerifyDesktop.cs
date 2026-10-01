@@ -294,6 +294,33 @@ internal static class VerifyDesktop
                 Check(Field<Border>(window, "DrawingHost").Child is SheetDrawing, "Selected sheet has a drawing");
                 Check(Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.InventoryPath)), "Optimize never writes inventory");
                 Check(workspace.Inventory.Panels[0].Quantity == 4, "Optimize never consumes stock");
+                var partsGrid = Field<DataGrid>(window, "PartsGrid");
+                Field<TabControl>(window, "Views").SelectedIndex = 0;
+                await Drain();
+                var oversize = workspace.Parts.Single(row => row.Label == "Oversize");
+                Click(RowButton(partsGrid, oversize, "Toggle enabled"));
+                await Drain();
+                Check(!workspace.Project.Parts.Single(part => part.Id == oversize.Id).IsEnabled && workspace.IsDirty
+                    && workspace.Parts.Contains(oversize) && Field<TextBlock>(window, "PartCount").Text.Contains("(1 disabled)")
+                    && ((DataGridRow)partsGrid.ItemContainerGenerator.ContainerFromItem(oversize)).Opacity < 1,
+                    "Disabling a part keeps it, fades it and marks the project unsaved");
+                Capture(window, "project-disabled-part-960.png");
+                await Invoke<Task>(window, "OptimizeAsync");
+                await Drain();
+                Check(Field<OptimizationResult>(window, "result") is { IsComplete: true } disabledRun
+                    && disabledRun.Sheets.SelectMany(sheet => sheet.Placements).All(placement => placement.Part.Id != oversize.Id),
+                    "Optimize ignores disabled parts");
+                Field<TabControl>(window, "Views").SelectedIndex = 0;
+                await Drain();
+                Click(RowButton(partsGrid, oversize, "Toggle enabled"));
+                await Drain();
+                Check(workspace.Project.Parts.Single(part => part.Id == oversize.Id).IsEnabled && Field<OptimizationResult?>(window, "result") is null,
+                    "Re-enabling a part restores it and invalidates the layout");
+                await Invoke<Task>(window, "OptimizeAsync");
+                await Drain();
+                window.Width = 1280;
+                window.Height = 800;
+                await Drain();
                 Capture(window, "layout-1280.png");
                 Call(window, "NextSheetClick");
                 Check(Field<ComboBox>(window, "SheetSelector").SelectedIndex == 1, "Next sheet navigation works");
@@ -936,6 +963,23 @@ internal static class VerifyDesktop
         Check(!rows.Contains(added) && rows.Count == count && !Field<bool>(window, "stockPending")
             && Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.InventoryPath)),
             $"{kind}: row - discards an unsaved new row without writing inventory");
+        Click(RowButton(grid, last, "Toggle enabled"));
+        await Field<Task>(window, "stockSave");
+        await Drain();
+        var disabledInventory = await new InventoryStore(workspace.InventoryPath).LoadAsync();
+        var reloaded = rows.Single(row => row.Id == last.Id);
+        Check(!disabledInventory.Panels.Concat<IStockItem>(disabledInventory.Scraps).Single(item => item.Id == last.Id).IsEnabled
+            && !reloaded.IsEnabled && reloaded.Usability == "Disabled" && !Field<bool>(window, "stockPending")
+            && ((DataGridRow)grid.ItemContainerGenerator.ContainerFromItem(reloaded)).Opacity < 1,
+            $"{kind}: disabling stock saves immediately, fades the row and shows Disabled");
+        Capture(window, $"{kind}-disabled.png");
+        Click(RowButton(grid, reloaded, "Toggle enabled"));
+        await Field<Task>(window, "stockSave");
+        await Drain();
+        last = rows.Single(row => row.Id == last.Id);
+        var enabledInventory = await new InventoryStore(workspace.InventoryPath).LoadAsync();
+        Check(last.IsEnabled && enabledInventory.Panels.Concat<IStockItem>(enabledInventory.Scraps).Single(item => item.Id == last.Id).IsEnabled,
+            $"{kind}: re-enabling stock saves immediately");
         Click(RowButton(grid, last, "Delete row"));
         await Field<Task>(window, "stockSave");
         await Drain();
@@ -1012,7 +1056,8 @@ internal static class VerifyDesktop
                     if (column == grid.Columns[0] && gridName != "MaterialsGrid")
                     {
                         var names = Descendants<Button>(content).Select(AutomationProperties.GetName).ToArray();
-                        Check(column.Header is null && column.IsReadOnly && names.SequenceEqual(["Delete row"]),
+                        Check(column.Header is null && column.IsReadOnly && names.SequenceEqual(gridName is "PartsGrid" or "PanelsGrid" or "ScrapsGrid"
+                                ? ["Delete row", "Toggle enabled"] : new[] { "Delete row" }),
                             $"{gridName} starts with the row button column at {width}");
                     }
                     else if (column is DataGridTemplateColumn && row is PartRow part && Find<Button>(content) is { } swatch)

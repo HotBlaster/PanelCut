@@ -21,7 +21,7 @@ public sealed class PanelOptimizer
         var materials = catalogue.Materials.ToDictionary(material => material.Id);
         Material Resolve(Guid id) => materials.TryGetValue(id, out var material) ? material
             : throw new ArgumentException($"Material {id} is missing from the catalogue. Select an available material.");
-        var demand = project.Parts.Select(part =>
+        var demand = project.Parts.Where(part => part.IsEnabled).Select(part =>
         {
             var material = Resolve(part.MaterialId);
             return new Demand(new PartSnapshot(part.Id, part.Width, part.Height, part.Quantity, material.Name,
@@ -29,7 +29,7 @@ public sealed class PanelOptimizer
         }).ToArray();
         var orderedDemand = demand.OrderByDescending(item => item.Area)
             .ThenByDescending(item => Math.Max(item.Part.Width, item.Part.Height)).ToArray();
-        var stockItems = inventory.Panels.Cast<IStockItem>().Concat(inventory.Scraps)
+        var stockItems = inventory.Panels.Cast<IStockItem>().Concat(inventory.Scraps).Where(stock => stock.IsEnabled)
             .Select(stock =>
             {
                 var material = Resolve(stock.MaterialId);

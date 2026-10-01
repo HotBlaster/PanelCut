@@ -118,12 +118,17 @@ public partial class MainWindow : Window
         AddText(UnplacedGrid, "Type", "Part.MaterialType", 130, true);
         AddText(UnplacedGrid, "Thickness mm", "Part.Thickness", 110, true, numeric: true);
         foreach (var grid in new[] { PartsGrid, PanelsGrid, ScrapsGrid, BladesGrid, BrandsGrid })
+        {
+            var toggles = grid == PartsGrid || grid == PanelsGrid || grid == ScrapsGrid;
             grid.Columns.Insert(0, new DataGridTemplateColumn
             {
-                Width = 34, IsReadOnly = true,
+                Width = toggles ? 62 : 34, IsReadOnly = true,
                 CanUserSort = false, CanUserResize = false, CanUserReorder = false,
-                CellTemplate = (DataTemplate)FindResource("RowActionsTemplate")
+                CellTemplate = (DataTemplate)FindResource(toggles ? "EnabledRowActionsTemplate" : "RowActionsTemplate")
             });
+            if (toggles)
+                grid.RowStyle = (Style)FindResource("EnabledRowStyle");
+        }
     }
 
     private void MaterialTypeDropDownClosed(object sender, EventArgs args) =>
@@ -876,6 +881,54 @@ public partial class MainWindow : Window
             AddBrandClick(sender, args);
     }
 
+    private async void RowEnabledClick(object sender, RoutedEventArgs args)
+    {
+        switch (((FrameworkElement)sender).DataContext)
+        {
+            case PartRow part:
+                TogglePart(part);
+                break;
+            case StockRow stock:
+                await ToggleStockAsync(stock);
+                break;
+        }
+    }
+
+    private void TogglePart(PartRow row)
+    {
+        if (busy || !CommitProject())
+            return;
+        row.IsEnabled = !row.IsEnabled;
+        row.Refresh();
+        if (!CommitProject())
+        {
+            row.IsEnabled = !row.IsEnabled;
+            row.Refresh();
+        }
+    }
+
+    private async Task ToggleStockAsync(StockRow row)
+    {
+        if (busy || !stockSave.IsCompleted)
+            return;
+        if (row.IsEditing)
+        {
+            row.IsEnabled = !row.IsEnabled;
+            row.Refresh();
+            return;
+        }
+        if (!CommitStockGrid() || !await ReadyAsync() || !workspace.InventoryReady)
+            return;
+        row.IsEnabled = !row.IsEnabled;
+        row.Refresh();
+        try
+        {
+            stockSave = PersistStockAsync(workspace.InventoryCandidate());
+            await stockSave;
+        }
+        catch (Exception exception) { ShowError(exception); }
+    }
+
     private async void RowRemoveClick(object sender, RoutedEventArgs args)
     {
         var element = (FrameworkElement)sender;
@@ -1245,8 +1298,10 @@ public partial class MainWindow : Window
         var marker = workspace.IsDirty ? " *" : "";
         Title = $"PanelCut - {name}{marker}";
         ProjectName.Text = name + marker;
-        PartCount.Text = $"{workspace.Parts.Count} part rows";
-        OptimizeButton.IsEnabled = !busy && workspace.InventoryReady && workspace.MaterialsReady && workspace.BladesReady && workspace.Parts.Count > 0;
+        var disabled = workspace.Parts.Count(part => !part.IsEnabled);
+        PartCount.Text = $"{workspace.Parts.Count} part rows" + (disabled > 0 ? $" ({disabled} disabled)" : "");
+        OptimizeButton.IsEnabled = !busy && workspace.InventoryReady && workspace.MaterialsReady && workspace.BladesReady
+            && workspace.Parts.Any(part => part.IsEnabled);
         PartsGrid.IsEnabled = AddPartButton.IsEnabled = ImportPartsButton.IsEnabled = workspace.MaterialsReady;
         PanelsGrid.IsEnabled = ScrapsGrid.IsEnabled = workspace.InventoryReady && workspace.MaterialsReady;
         AddPanelButton.IsEnabled = AddScrapButton.IsEnabled = DeleteStockButton.IsEnabled = RetryEditButton.IsEnabled = workspace.InventoryReady && workspace.MaterialsReady;

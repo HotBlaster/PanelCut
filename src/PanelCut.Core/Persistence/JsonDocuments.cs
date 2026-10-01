@@ -51,6 +51,7 @@ internal abstract class StockDocument
     public int Quantity { get; set; } = 1;
     public int Priority { get; set; }
     public decimal CostPerUnit { get; set; }
+    public bool IsEnabled { get; set; } = true;
 
     protected StockDocument() { }
 
@@ -64,6 +65,7 @@ internal abstract class StockDocument
         Quantity = stock.Quantity;
         Priority = stock.Priority;
         CostPerUnit = stock.CostPerUnit;
+        IsEnabled = stock.IsEnabled;
     }
 
     protected void ApplyTo(IStockItem stock)
@@ -72,6 +74,7 @@ internal abstract class StockDocument
         stock.Label = Label;
         stock.Priority = Priority;
         stock.CostPerUnit = CostPerUnit;
+        stock.IsEnabled = IsEnabled;
     }
 }
 
@@ -162,6 +165,7 @@ internal sealed class PartDocument
     public int Quantity { get; set; } = 1;
     public string Label { get; set; } = string.Empty;
     public string Color { get; set; } = Part.DefaultColor;
+    public bool IsEnabled { get; set; } = true;
 
     // Legacy fields from older project files: accepted on load, never written.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool EdgeBandTop { get; set; }
@@ -181,12 +185,14 @@ internal sealed class PartDocument
         Quantity = part.Quantity;
         Label = part.Label;
         Color = part.Color;
+        IsEnabled = part.IsEnabled;
     }
 
     internal Part ToModel() => new(Width, Height, MaterialId, Quantity)
     {
         Id = Id,
         Label = Label,
-        Color = Color
+        Color = Color,
+        IsEnabled = IsEnabled
     };
 }

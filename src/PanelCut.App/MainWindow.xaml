@@ -116,6 +116,50 @@
             <Button Content="-" Click="RowRemoveClick" Style="{StaticResource RowActionButtonStyle}" HorizontalAlignment="Left"
                     ToolTip="Delete this row" AutomationProperties.Name="Delete row"/>
         </DataTemplate>
+        <DataTemplate x:Key="EnabledRowActionsTemplate">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="-" Click="RowRemoveClick" Style="{StaticResource RowActionButtonStyle}"
+                        ToolTip="Delete this row" AutomationProperties.Name="Delete row"/>
+                <Button Click="RowEnabledClick" AutomationProperties.Name="Toggle enabled">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource RowActionButtonStyle}">
+                            <Setter Property="ToolTip" Value="Enabled: exclude from optimization"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsEnabled}" Value="False">
+                                    <Setter Property="ToolTip" Value="Disabled: include in optimization"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                    <!-- Segoe MDL2 lacks the "Hide" glyph on Windows 10, so the slash is drawn. -->
+                    <Grid Width="16" Height="16">
+                        <TextBlock Text="&#xE890;" FontFamily="Segoe MDL2 Assets" FontWeight="Normal" FontSize="14"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <Line X1="2" Y1="14" X2="14" Y2="2" StrokeThickness="1.6"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}">
+                            <Line.Style>
+                                <Style TargetType="Line">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsEnabled}" Value="False">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Line.Style>
+                        </Line>
+                    </Grid>
+                </Button>
+            </StackPanel>
+        </DataTemplate>
+        <!-- Fades disabled items; never bind DataGridRow.IsEnabled or the toggle could not re-enable it. -->
+        <Style x:Key="EnabledRowStyle" TargetType="DataGridRow">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsEnabled}" Value="False">
+                    <Setter Property="Opacity" Value="0.45"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
         <Style TargetType="TabItem"><Setter Property="Padding" Value="18,10"/></Style>
         <Style x:Key="MaterialTabsStyle" TargetType="TabControl">
             <Setter Property="Margin" Value="0,0,0,10"/>

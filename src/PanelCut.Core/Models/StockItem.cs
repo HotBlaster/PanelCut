@@ -22,6 +22,7 @@ public abstract class StockItem : IStockItem
         get;
         set => field = value >= 0 ? value : throw new ArgumentOutOfRangeException(nameof(CostPerUnit));
     }
+    public bool IsEnabled { get; set; } = true;
     public virtual double UsableWidth => Width;
     public virtual double UsableHeight => Height;
     public bool IsUsable => UsableWidth > 0 && UsableHeight > 0;

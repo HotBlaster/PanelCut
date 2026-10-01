@@ -204,12 +204,14 @@ public sealed class PersistenceTests : IDisposable
         Assert.False(panel.TryGetProperty("material", out _));
         Assert.Equal(inventory.Panels[0].MaterialId, panel.GetProperty("materialId").GetGuid());
         Assert.Equal("Panel A", panel.GetProperty("label").GetString());
-        Assert.Equal(new[] { "costPerUnit", "height", "id", "label", "materialId", "priority", "quantity", "trimBottom", "trimLeft", "trimRight", "trimTop", "width" },
+        Assert.Equal(new[] { "costPerUnit", "height", "id", "isEnabled", "label", "materialId", "priority", "quantity", "trimBottom", "trimLeft", "trimRight", "trimTop", "width" },
             panel.EnumerateObject().Select(property => property.Name).Order());
         Assert.Equal((5d, 10d, 15d, 20d), (panel.GetProperty("trimTop").GetDouble(), panel.GetProperty("trimBottom").GetDouble(),
             panel.GetProperty("trimLeft").GetDouble(), panel.GetProperty("trimRight").GetDouble()));
-        Assert.Equal(new[] { "costPerUnit", "height", "id", "label", "materialId", "priority", "quantity", "width" },
+        Assert.Equal(new[] { "costPerUnit", "height", "id", "isEnabled", "label", "materialId", "priority", "quantity", "width" },
             json.RootElement.GetProperty("scraps")[0].EnumerateObject().Select(property => property.Name).Order());
+        Assert.False(loaded.Scraps[0].IsEnabled);
+        Assert.True(loaded.Panels[0].IsEnabled);
     }
 
     [Fact]
@@ -230,9 +232,11 @@ public sealed class PersistenceTests : IDisposable
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(ProjectPath));
         Assert.Equal(new[] { "bladeId", "cutPattern", "parts", "schemaVersion", "unit" },
             json.RootElement.EnumerateObject().Select(property => property.Name).Order());
-        Assert.Equal(new[] { "color", "height", "id", "label", "materialId", "quantity", "width" },
+        Assert.Equal(new[] { "color", "height", "id", "isEnabled", "label", "materialId", "quantity", "width" },
             json.RootElement.GetProperty("parts")[0].EnumerateObject().Select(property => property.Name).Order());
         Assert.Equal("inches", json.RootElement.GetProperty("unit").GetString());
+        Assert.True(loaded.Parts[0].IsEnabled);
+        Assert.False(loaded.Parts[1].IsEnabled);
         Assert.Equal("byWidth", json.RootElement.GetProperty("cutPattern").GetString());
         Assert.Equal(254, json.RootElement.GetProperty("parts")[0].GetProperty("width").GetDouble());
         Assert.Equal(3, json.RootElement.GetProperty("schemaVersion").GetInt32());
@@ -505,17 +509,18 @@ public sealed class PersistenceTests : IDisposable
         await new ProjectStore().SaveAsync(ProjectPath, CreateProject());
         var project = JsonNode.Parse(await File.ReadAllTextAsync(ProjectPath))!;
         var part = project["parts"]![0]!.AsObject();
-        foreach (var name in new[] { "quantity", "label", "color" })
+        foreach (var name in new[] { "quantity", "label", "color", "isEnabled" })
             part.Remove(name);
         await File.WriteAllTextAsync(ProjectPath, project.ToJsonString());
         var loadedPart = (await new ProjectStore().LoadAsync(ProjectPath)).Parts[0];
         Assert.Equal(1, loadedPart.Quantity);
         Assert.Equal(string.Empty, loadedPart.Label);
         Assert.Equal(Part.DefaultColor, loadedPart.Color);
+        Assert.True(loadedPart.IsEnabled);
         await new InventoryStore(InventoryPath).SaveAsync(CreateInventory());
         var inventory = JsonNode.Parse(await File.ReadAllTextAsync(InventoryPath))!;
         var scrap = inventory["scraps"]![0]!.AsObject();
-        foreach (var name in new[] { "quantity", "label", "priority", "costPerUnit" })
+        foreach (var name in new[] { "quantity", "label", "priority", "costPerUnit", "isEnabled" })
             scrap.Remove(name);
         await File.WriteAllTextAsync(InventoryPath, inventory.ToJsonString());
         var loadedScrap = (await new InventoryStore(InventoryPath).LoadAsync()).Scraps[0];
@@ -523,6 +528,7 @@ public sealed class PersistenceTests : IDisposable
         Assert.Equal(string.Empty, loadedScrap.Label);
         Assert.Equal(0, loadedScrap.Priority);
         Assert.Equal(0m, loadedScrap.CostPerUnit);
+        Assert.True(loadedScrap.IsEnabled);
     }
 
     [Fact]
@@ -543,7 +549,7 @@ public sealed class PersistenceTests : IDisposable
         Assert.Equal(Part.DefaultColor, loaded.Parts[0].Color);
         await store.SaveAsync(ProjectPath, loaded);
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(ProjectPath));
-        Assert.Equal(new[] { "color", "height", "id", "label", "materialId", "quantity", "width" },
+        Assert.Equal(new[] { "color", "height", "id", "isEnabled", "label", "materialId", "quantity", "width" },
             json.RootElement.GetProperty("parts")[0].EnumerateObject().Select(property => property.Name).Order());
     }
 
@@ -575,7 +581,7 @@ public sealed class PersistenceTests : IDisposable
         });
         inventory.Scraps.Add(new Scrap(400, 300, TestMaterials.Id("Oak", 18), 0)
         {
-            Label = "Offcut B", Priority = -2, CostPerUnit = 12.34m
+            Label = "Offcut B", Priority = -2, CostPerUnit = 12.34m, IsEnabled = false
         });
         inventory.Scraps.Add(new Scrap(200, 200, TestMaterials.Id("Birch", 12)));
         return inventory;
@@ -602,7 +608,7 @@ public sealed class PersistenceTests : IDisposable
         });
         project.Parts.Add(new Part(500, 300, TestMaterials.Id("Birch"))
         {
-            Label = "Door"
+            Label = "Door", IsEnabled = false
         });
         return project;
     }

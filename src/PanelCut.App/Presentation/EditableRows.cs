@@ -209,6 +209,7 @@ public sealed class PartRow : MaterialBoundRow
         selectedMaterialId = part.MaterialId;
         Quantity = part.Quantity.ToString(CultureInfo.CurrentCulture);
         Color = part.Color;
+        IsEnabled = part.IsEnabled;
     }
 
     public string Label { get; set; } = "";
@@ -218,13 +219,14 @@ public sealed class PartRow : MaterialBoundRow
     public string Thickness => SelectedMaterial is { } material
         ? Format(UnitConversion.FromMillimetres(material.Thickness, unit)) : "";
     public string Color { get; set; } = Part.DefaultColor;
+    public bool IsEnabled { get; set; } = true;
 
     public Part ToModel() => new(
         Width == initialWidth && originalWidth.HasValue ? originalWidth.Value : UnitConversion.ToMillimetres(Number(Width, "Width"), unit),
         Height == initialHeight && originalHeight.HasValue ? originalHeight.Value : UnitConversion.ToMillimetres(Number(Height, "Height"), unit),
         MaterialId, Integer(Quantity, "Quantity"))
     {
-        Id = Id, Label = Label, Color = Color
+        Id = Id, Label = Label, Color = Color, IsEnabled = IsEnabled
     };
 }
 
@@ -243,6 +245,7 @@ public sealed class StockRow : MaterialBoundRow
         Quantity = stock.Quantity.ToString(CultureInfo.CurrentCulture);
         Priority = stock.Priority.ToString(CultureInfo.CurrentCulture);
         CostPerUnit = stock.CostPerUnit.ToString(CultureInfo.CurrentCulture);
+        IsEnabled = stock.IsEnabled;
         if (stock is Panel panel)
         {
             TrimTop = Format(panel.TrimTop);
@@ -269,10 +272,13 @@ public sealed class StockRow : MaterialBoundRow
     public string TrimBottom { get; set; } = "0";
     public string TrimLeft { get; set; } = "0";
     public string TrimRight { get; set; } = "0";
+    public bool IsEnabled { get; set; } = true;
     public string Usability
     {
         get
         {
+            if (!IsEnabled)
+                return "Disabled";
             try { return SelectedMaterial is null ? "Select material" : ToModel().IsUsable ? "Usable" : "Unusable trim"; }
             catch (ArgumentException) { return "Incomplete"; }
         }
@@ -291,6 +297,7 @@ public sealed class StockRow : MaterialBoundRow
             CultureInfo.CurrentCulture, out var cost))
             throw new ArgumentException("Cost per unit: enter a decimal number.");
         stock.CostPerUnit = cost;
+        stock.IsEnabled = IsEnabled;
         if (stock is Panel panel)
         {
             panel.TrimTop = Number(TrimTop, "Trim top");

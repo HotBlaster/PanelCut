@@ -17,6 +17,7 @@ public sealed class Part
     public Guid MaterialId { get; set => field = Validation.Id(value); }
     public string Label { get; set => field = value ?? throw new ArgumentNullException(nameof(Label)); } = string.Empty;
     public string Color { get; set => field = Validation.Color(value); } = DefaultColor;
+    public bool IsEnabled { get; set; } = true;
 
     public const string DefaultColor = "#D5DDDB";
 }
