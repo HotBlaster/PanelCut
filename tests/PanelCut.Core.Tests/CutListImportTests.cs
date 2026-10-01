@@ -32,6 +32,23 @@ public sealed class CutListImportTests
     }
 
     [Fact]
+    public void MissingColourProviderIsUsedOnlyForEmptyValidRows()
+    {
+        var calls = 0;
+        var result = CutListImporter.Parse("""
+            Width,Height,Material,Color
+            100,100,Oak,
+            100,100,Oak,#010203
+            -1,100,Oak,
+            100,100,Oak
+            """, Catalogue, () => $"#00000{++calls}");
+
+        Assert.Equal(["#000001", "#010203", "#000002"], result.Parts.Select(part => part.Color));
+        Assert.Equal(2, calls);
+        Assert.Equal(4, Assert.Single(result.Skipped).Line);
+    }
+
+    [Fact]
     public void SemicolonFilesAcceptDecimalCommaAndCaseInsensitiveHeaders()
     {
         var result = CutListImporter.Parse("\uFEFFwidth;HEIGHT;material;thickness\r\n600,5;300;birch;18\r\n\r\n", Catalogue);

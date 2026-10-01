@@ -184,6 +184,33 @@ public class ModelTests
     }
 
     [Fact]
+    public void PartPaletteHasDistinctValidColours()
+    {
+        Assert.True(PartPalette.Colors.Count >= 10);
+        Assert.Equal(PartPalette.Colors.Count, PartPalette.Colors.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.DoesNotContain(Part.DefaultColor, PartPalette.Colors, StringComparer.OrdinalIgnoreCase);
+        foreach (var color in PartPalette.Colors)
+            Assert.Equal(color, new Part(1, 1, Guid.NewGuid()) { Color = color }.Color);
+    }
+
+    [Fact]
+    public void PartPalettePrefersUnusedThenLeastUsedColours()
+    {
+        var random = new Random(7);
+        var used = new List<string> { PartPalette.Colors[0].ToLowerInvariant(), "#123456" };
+        for (var index = 1; index < PartPalette.Colors.Count; index++)
+        {
+            var next = PartPalette.Next(used, random);
+            Assert.DoesNotContain(next, used, StringComparer.OrdinalIgnoreCase);
+            used.Add(next);
+        }
+        Assert.All(PartPalette.Colors, color => Assert.Contains(color, used, StringComparer.OrdinalIgnoreCase));
+        used.AddRange(PartPalette.Colors.Skip(1));
+        Assert.Equal(PartPalette.Colors[0], PartPalette.Next(used, random));
+        Assert.Equal(PartPalette.Next([], new Random(3)), PartPalette.Next([], new Random(3)));
+    }
+
+    [Fact]
     public void AggregateValidationRejectsDuplicatesAndNulls()
     {
         var panel = new Panel(100, 80, TestMaterials.Id("Oak", 18));

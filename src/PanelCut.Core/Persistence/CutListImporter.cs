@@ -15,10 +15,12 @@ public static class CutListImporter
     private static readonly string[] Supported =
         ["Label", "Width", "Height", "Quantity", "Material", "Type", "Thickness", "Color"];
 
-    public static async Task<CutListImport> LoadAsync(string path, MaterialCatalogue catalogue, CancellationToken cancellationToken = default) =>
-        Parse(await File.ReadAllTextAsync(path, cancellationToken), catalogue);
+    public static async Task<CutListImport> LoadAsync(string path, MaterialCatalogue catalogue,
+        Func<string>? missingColor = null, CancellationToken cancellationToken = default) =>
+        Parse(await File.ReadAllTextAsync(path, cancellationToken), catalogue, missingColor);
 
-    public static CutListImport Parse(string text, MaterialCatalogue catalogue)
+    /// <param name="missingColor">Supplies the colour of rows with an empty Color cell; defaults to <see cref="Part.DefaultColor"/>.</param>
+    public static CutListImport Parse(string text, MaterialCatalogue catalogue, Func<string>? missingColor = null)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(catalogue);
@@ -32,7 +34,7 @@ public static class CutListImporter
         var skipped = new List<CutListIssue>();
         foreach (var (line, fields) in records.Skip(1))
         {
-            try { parts.Add(ParseRow(fields, columns, records[0].Fields.Length, catalogue)); }
+            try { parts.Add(ParseRow(fields, columns, records[0].Fields.Length, catalogue, missingColor)); }
             catch (FormatException exception) { skipped.Add(new CutListIssue(line, exception.Message)); }
         }
         return new CutListImport(parts, skipped);
@@ -55,17 +57,21 @@ public static class CutListImporter
         return columns;
     }
 
-    private static Part ParseRow(string[] fields, Dictionary<string, int> columns, int columnCount, MaterialCatalogue catalogue)
+    private static Part ParseRow(string[] fields, Dictionary<string, int> columns, int columnCount, MaterialCatalogue catalogue,
+        Func<string>? missingColor)
     {
         if (fields.Length > columnCount)
             throw new FormatException($"Row has {fields.Length} values but the header has {columnCount} columns.");
         string Value(string column) => columns.TryGetValue(column, out var index) && index < fields.Length ? fields[index].Trim() : "";
-        return new Part(Number(Value("Width"), "Width"), Number(Value("Height"), "Height"),
+        var part = new Part(Number(Value("Width"), "Width"), Number(Value("Height"), "Height"),
             ResolveMaterial(Value("Material"), Value("Type"), Value("Thickness"), catalogue), Quantity(Value("Quantity")))
         {
             Label = Value("Label"),
-            Color = Color(Value("Color")),
         };
+        var color = Value("Color");
+        // Assigned last so the provider is only consumed by rows that parsed successfully.
+        part.Color = color.Length == 0 ? missingColor?.Invoke() ?? Part.DefaultColor : Color(color);
+        return part;
     }
 
     private static Guid ResolveMaterial(string name, string type, string thickness, MaterialCatalogue catalogue)
@@ -83,8 +89,6 @@ public static class CutListImporter
 
     private static string Color(string value)
     {
-        if (value.Length == 0)
-            return Part.DefaultColor;
         try { return Validation.Color(value); }
         catch (ArgumentException) { throw new FormatException($"Color must be in #RRGGBB format (found '{value}')."); }
     }

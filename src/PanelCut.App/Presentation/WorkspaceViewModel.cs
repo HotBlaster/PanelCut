@@ -100,7 +100,13 @@ public sealed class WorkspaceViewModel
             row.Refresh();
     }
 
-    public PartRow CreatePartRow(Part? part = null) => new(Project.Unit, part, () => Catalogue);
+    public PartRow CreatePartRow(Part? part = null)
+    {
+        var row = new PartRow(Project.Unit, part, () => Catalogue);
+        if (part is null)
+            row.Color = PartPalette.Next(Parts.Select(existing => existing.Color), Random.Shared);
+        return row;
+    }
     public StockRow CreateStockRow(bool scrap, IStockItem? stock = null) => new(scrap, stock, () => Catalogue);
     public BladeRow CreateBladeRow(Blade? blade = null) => new(() => Blades, blade);
 
@@ -249,7 +255,13 @@ public sealed class WorkspaceViewModel
 
     public async Task<CutListImport> ImportPartsAsync(string path)
     {
-        var import = await CutListImporter.LoadAsync(path, Catalogue);
+        var used = Parts.Select(row => row.Color).ToList();
+        var import = await CutListImporter.LoadAsync(path, Catalogue, () =>
+        {
+            var color = PartPalette.Next(used, Random.Shared);
+            used.Add(color);
+            return color;
+        });
         foreach (var part in import.Parts)
             Parts.Add(CreatePartRow(part));
         return import;

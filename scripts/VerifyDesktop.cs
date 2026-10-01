@@ -149,7 +149,7 @@ internal static class VerifyDesktop
                 Call(window, "CancelMaterialClick");
                 await Drain();
                 birchRow = workspace.Materials.Single(material => material.Id == birchId);
-                var nameContent = (TextBlock)materialsGrid.Columns[1].GetCellContent(birchRow);
+                var nameContent = (TextBlock)materialsGrid.Columns[0].GetCellContent(birchRow);
                 Check(nameContent.VerticalAlignment == VerticalAlignment.Center && nameContent.TextAlignment == TextAlignment.Left,
                     "Material names are vertically centered and remain left-aligned");
                 var thicknessColumn = materialsGrid.Columns.Single(column => column.SortMemberPath == "Thickness");
@@ -246,6 +246,7 @@ internal static class VerifyDesktop
                 Call(window, "AddPartClick");
                 var parts = Field<DataGrid>(window, "PartsGrid");
                 var part = workspace.Parts.Single();
+                Check(PartPalette.Colors.Contains(part.Color), "New part gets a palette colour");
                 SetCell(parts, part, "Label", "Shelf");
                 SetCell(parts, part, "Width", "254");
                 SetCell(parts, part, "Height", "127");
@@ -609,7 +610,7 @@ internal static class VerifyDesktop
         Check(workspace.BladeRows.Count == 2 && workspace.BrandRows.Count == 1 && !Field<bool>(window, "bladePending")
             && Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(workspace.BladesPath)),
             "Cancelling a draft with a new brand creates neither the blade nor the brand");
-        Click(RowButton(grid, workspace.BladeRows.Last(), "Add row"));
+        Click(AddRowButton(grid));
         await Drain();
         var rowDraft = workspace.BladeRows.Last();
         Check(workspace.BladeRows.Count == 3 && rowDraft.IsEditing, "Blade row + adds a draft blade");
@@ -826,6 +827,9 @@ internal static class VerifyDesktop
         SelectTab(window, "ProjectTab");
         Call(window, "AddPartClick");
         var row = workspace.Parts.Last();
+        var others = workspace.Parts.Where(part => part != row).Select(part => part.Color).ToArray();
+        Check(PartPalette.Colors.Contains(row.Color) && (others.Length >= PartPalette.Colors.Count || !others.Contains(row.Color)),
+            "New part gets a palette colour not used by other parts");
         var grid = Field<DataGrid>(window, "PartsGrid");
         SelectMaterial(grid, row, materialId);
         SetCell(grid, row, "Width", "150");
@@ -916,18 +920,16 @@ internal static class VerifyDesktop
     {
         var kind = grid.Name;
         var last = rows.Last();
-        Check(RowButton(grid, last, "Add row").Visibility == Visibility.Visible
-            && rows.Take(rows.Count - 1).All(row => RowButton(grid, row, "Add row").Visibility != Visibility.Visible),
-            $"{kind}: only the last row shows +");
+        Check(rows.All(row => Descendants<Button>(grid.Columns[0].GetCellContent(row)).All(button => AutomationProperties.GetName(button) != "Add row"))
+            && IsBelowLastRow(grid, AddRowButton(grid)), $"{kind}: + sits in its own row under the last row");
         var before = await File.ReadAllBytesAsync(workspace.InventoryPath);
         var count = rows.Count;
-        Click(RowButton(grid, last, "Add row"));
+        Click(AddRowButton(grid));
         await Drain();
         var added = rows.Last();
         Check(rows.Count == count + 1 && added.IsEditing && grid.CurrentColumn is DataGridTextColumn or DataGridComboBoxColumn,
             $"{kind}: row + adds a new row in edit mode like the toolbar button");
-        Check(RowButton(grid, added, "Add row").Visibility == Visibility.Visible && RowButton(grid, last, "Add row").Visibility != Visibility.Visible,
-            $"{kind}: + moves to the new last row");
+        Check(IsBelowLastRow(grid, AddRowButton(grid)), $"{kind}: + stays under the new last row");
         Click(RowButton(grid, added, "Delete row"));
         await Field<Task>(window, "stockSave");
         await Drain();
@@ -942,7 +944,27 @@ internal static class VerifyDesktop
             && !Field<bool>(window, "stockPending"),
             $"{kind}: row - deletes a saved row immediately without confirmation");
         if (rows.Count > 0)
-            Check(RowButton(grid, rows.Last(), "Add row").Visibility == Visibility.Visible, $"{kind}: + returns to the remaining last row");
+            Check(IsBelowLastRow(grid, AddRowButton(grid)), $"{kind}: + stays under the remaining last row");
+    }
+
+    private static Button AddRowButton(DataGrid grid)
+    {
+        grid.UpdateLayout();
+        var button = Descendants<Button>(grid).Single(button => AutomationProperties.GetName(button) == "Add row");
+        Check(button.IsVisible && ReferenceEquals(button.Tag, grid), $"{grid.Name}: add row is visible and targets its grid");
+        return button;
+    }
+
+    private static bool IsBelowLastRow(DataGrid grid, Button button)
+    {
+        if (grid.Items.Count == 0)
+            return true;
+        grid.ScrollIntoView(grid.Items[^1]);
+        grid.UpdateLayout();
+        var row = (DataGridRow)grid.ItemContainerGenerator.ContainerFromIndex(grid.Items.Count - 1);
+        var rowBottom = row.TranslatePoint(new Point(0, row.ActualHeight), grid).Y;
+        var buttonTop = button.TranslatePoint(new Point(0, 0), grid).Y;
+        return buttonTop >= rowBottom - 0.5 && buttonTop - rowBottom < row.ActualHeight;
     }
 
     private static Button RowButton(DataGrid grid, object row, string name)
@@ -987,11 +1009,10 @@ internal static class VerifyDesktop
                     grid.ScrollIntoView(row, column);
                     grid.UpdateLayout();
                     var content = column.GetCellContent(row);
-                    if (column == grid.Columns[0])
+                    if (column == grid.Columns[0] && gridName != "MaterialsGrid")
                     {
                         var names = Descendants<Button>(content).Select(AutomationProperties.GetName).ToArray();
-                        Check(column.Header is null && column.IsReadOnly
-                            && names.SequenceEqual(gridName == "MaterialsGrid" ? ["Add row"] : new[] { "Delete row", "Add row" }),
+                        Check(column.Header is null && column.IsReadOnly && names.SequenceEqual(["Delete row"]),
                             $"{gridName} starts with the row button column at {width}");
                     }
                     else if (column is DataGridTemplateColumn && row is PartRow part && Find<Button>(content) is { } swatch)

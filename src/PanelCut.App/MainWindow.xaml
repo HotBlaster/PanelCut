@@ -9,6 +9,12 @@
         <Style TargetType="Button">
             <Setter Property="Padding" Value="12,6"/><Setter Property="Margin" Value="0,0,8,0"/><Setter Property="MinHeight" Value="32"/>
         </Style>
+        <Style x:Key="RowActionButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="24"/><Setter Property="Height" Value="24"/><Setter Property="MinHeight" Value="0"/>
+            <Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="2,0"/><Setter Property="Focusable" Value="False"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Tag" Value="{Binding RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+        </Style>
         <Style TargetType="DataGrid">
             <Setter Property="AutoGenerateColumns" Value="False"/><Setter Property="CanUserAddRows" Value="False"/>
             <Setter Property="CanUserDeleteRows" Value="False"/><Setter Property="SelectionMode" Value="Single"/>
@@ -17,6 +23,65 @@
             <Setter Property="HorizontalGridLinesBrush" Value="#E2E8E7"/><Setter Property="AlternatingRowBackground" Value="#F5F8F7"/>
             <Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="#CDD5D3"/>
             <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto"/>
+            <!-- Pixel scrolling: the rows share the scroll content with the add row below them. -->
+            <Setter Property="ScrollViewer.CanContentScroll" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGrid">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <ScrollViewer x:Name="DG_ScrollViewer" Focusable="False">
+                                <ScrollViewer.Template>
+                                    <ControlTemplate TargetType="ScrollViewer">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <Button Command="{x:Static DataGrid.SelectAllCommand}" Focusable="False"
+                                                    Style="{DynamicResource {ComponentResourceKey ResourceId=DataGridSelectAllButtonStyle, TypeInTargetAssembly={x:Type DataGrid}}}"
+                                                    Visibility="{Binding HeadersVisibility, ConverterParameter={x:Static DataGridHeadersVisibility.All}, Converter={x:Static DataGrid.HeadersVisibilityConverter}, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    Width="{Binding CellsPanelHorizontalOffset, RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+                                            <DataGridColumnHeadersPresenter x:Name="PART_ColumnHeadersPresenter" Grid.Column="1"
+                                                    Visibility="{Binding HeadersVisibility, ConverterParameter={x:Static DataGridHeadersVisibility.Column}, Converter={x:Static DataGrid.HeadersVisibilityConverter}, RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+                                            <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" Grid.Row="1" Grid.ColumnSpan="2"
+                                                    CanContentScroll="{TemplateBinding CanContentScroll}"/>
+                                            <ScrollBar x:Name="PART_VerticalScrollBar" Grid.Row="1" Grid.Column="2" Orientation="Vertical"
+                                                    Maximum="{TemplateBinding ScrollableHeight}" ViewportSize="{TemplateBinding ViewportHeight}"
+                                                    Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"
+                                                    Value="{Binding VerticalOffset, Mode=OneWay, RelativeSource={RelativeSource TemplatedParent}}"/>
+                                            <Grid Grid.Row="2" Grid.Column="1">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="{Binding NonFrozenColumnsViewportHorizontalOffset, RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ScrollBar x:Name="PART_HorizontalScrollBar" Grid.Column="1" Orientation="Horizontal"
+                                                        Maximum="{TemplateBinding ScrollableWidth}" ViewportSize="{TemplateBinding ViewportWidth}"
+                                                        Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}"
+                                                        Value="{Binding HorizontalOffset, Mode=OneWay, RelativeSource={RelativeSource TemplatedParent}}"/>
+                                            </Grid>
+                                        </Grid>
+                                    </ControlTemplate>
+                                </ScrollViewer.Template>
+                                <StackPanel>
+                                    <ItemsPresenter SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                                    <Border x:Name="AddRow" Height="34">
+                                        <Button Content="+" Click="RowAddClick" Style="{StaticResource RowActionButtonStyle}" HorizontalAlignment="Left"
+                                                ToolTip="Add a row" AutomationProperties.Name="Add row"/>
+                                    </Border>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsReadOnly" Value="True">
+                                <Setter TargetName="AddRow" Property="Visibility" Value="Collapsed"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style x:Key="CellTextStyle" TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center"/>
@@ -47,36 +112,9 @@
                 <Border Background="{Binding Color}" BorderBrush="#7A8A86" BorderThickness="1" Width="44" Height="14"/>
             </Button>
         </DataTemplate>
-        <controls:LastItemVisibilityConverter x:Key="LastItemVisibility"/>
-        <Style x:Key="RowActionButtonStyle" TargetType="Button">
-            <Setter Property="Width" Value="24"/><Setter Property="Height" Value="24"/><Setter Property="MinHeight" Value="0"/>
-            <Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="2,0"/><Setter Property="Focusable" Value="False"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Tag" Value="{Binding RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
-        </Style>
-        <Style x:Key="RowAddButtonStyle" TargetType="Button" BasedOn="{StaticResource RowActionButtonStyle}">
-            <Setter Property="Content" Value="+"/>
-            <Setter Property="ToolTip" Value="Add a row"/>
-            <Setter Property="AutomationProperties.Name" Value="Add row"/>
-            <Setter Property="Visibility">
-                <Setter.Value>
-                    <MultiBinding Converter="{StaticResource LastItemVisibility}">
-                        <Binding/>
-                        <Binding RelativeSource="{RelativeSource AncestorType=DataGrid}"/>
-                        <Binding Path="Items.Count" RelativeSource="{RelativeSource AncestorType=DataGrid}"/>
-                    </MultiBinding>
-                </Setter.Value>
-            </Setter>
-        </Style>
         <DataTemplate x:Key="RowActionsTemplate">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="-" Click="RowRemoveClick" Style="{StaticResource RowActionButtonStyle}"
-                        ToolTip="Delete this row" AutomationProperties.Name="Delete row"/>
-                <Button Click="RowAddClick" Style="{StaticResource RowAddButtonStyle}"/>
-            </StackPanel>
-        </DataTemplate>
-        <DataTemplate x:Key="RowAddTemplate">
-            <Button Click="RowAddClick" Style="{StaticResource RowAddButtonStyle}" HorizontalAlignment="Left"/>
+            <Button Content="-" Click="RowRemoveClick" Style="{StaticResource RowActionButtonStyle}" HorizontalAlignment="Left"
+                    ToolTip="Delete this row" AutomationProperties.Name="Delete row"/>
         </DataTemplate>
         <Style TargetType="TabItem"><Setter Property="Padding" Value="18,10"/></Style>
         <Style x:Key="MaterialTabsStyle" TargetType="TabControl">

@@ -117,12 +117,12 @@ public partial class MainWindow : Window
         AddText(UnplacedGrid, "Remaining", "Quantity", 100, true, numeric: true);
         AddText(UnplacedGrid, "Type", "Part.MaterialType", 130, true);
         AddText(UnplacedGrid, "Thickness mm", "Part.Thickness", 110, true, numeric: true);
-        foreach (var grid in new[] { PartsGrid, PanelsGrid, ScrapsGrid, MaterialsGrid, BladesGrid, BrandsGrid })
+        foreach (var grid in new[] { PartsGrid, PanelsGrid, ScrapsGrid, BladesGrid, BrandsGrid })
             grid.Columns.Insert(0, new DataGridTemplateColumn
             {
-                Width = grid == MaterialsGrid ? 34 : 62, IsReadOnly = true,
+                Width = 34, IsReadOnly = true,
                 CanUserSort = false, CanUserResize = false, CanUserReorder = false,
-                CellTemplate = (DataTemplate)FindResource(grid == MaterialsGrid ? "RowAddTemplate" : "RowActionsTemplate")
+                CellTemplate = (DataTemplate)FindResource("RowActionsTemplate")
             });
     }
 
